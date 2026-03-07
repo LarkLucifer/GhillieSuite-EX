@@ -37,9 +37,29 @@ from rich.table import Table
 _AUTH_HEADER_TOOLS = frozenset({"httpx", "katana", "nuclei", "dalfox", "sqlmap"})
 
 # ── Default short wordlist for ffuf (bundled fallback) ────────────────────────
-_DEFAULT_WORDLIST = str(
+# ── Default short wordlist for ffuf (bundled fallback) ────────────────────────
+_BUNDLED_WORDLIST = str(
     Path(__file__).parent / "resources" / "common_dirs.txt"
 )
+
+# ── Tech-specific Smart Wordlists ─────────────────────────────────────────────
+_PHP_WORDLIST = [
+    ".env", ".env.example", ".env.backup", ".env.dev",
+    "artisan", "telescope", "composer.json", "composer.lock",
+    "config/database.php", "storage/logs/laravel.log"
+]
+
+_JAVA_SPRING_WORDLIST = [
+    "actuator", "actuator/env", "actuator/heapdump", 
+    "actuator/threaddump", "actuator/health", "jolokia",
+    "WEB-INF/web.xml", "swagger-ui.html", "v2/api-docs"
+]
+
+_NODEJS_WORDLIST = [
+    "package.json", "package-lock.json", "yarn.lock",
+    "node_modules", ".npmrc", "tsconfig.json", "server.js",
+    "app.js", ".env"
+]
 
 
 @dataclass
@@ -234,6 +254,7 @@ def build_command(
     input_file: str | Path | None = None,
     wordlist: str | None = None,
     auth_headers: list[str] | None = None,
+    tech_stack: str = "",
 ) -> list[str]:
     """
     Resolve a ToolSpec's base_cmd by substituting all placeholders.
@@ -265,7 +286,19 @@ def build_command(
     spec = TOOL_REGISTRY[tool_name]
     out_str = str(output_file) if output_file else ""
     in_str  = str(input_file)  if input_file  else ""
-    wl_str  = wordlist or _DEFAULT_WORDLIST
+    
+    # Context-Aware Smart Wordlist Selection
+    wl_str = wordlist
+    if not wl_str:
+        tech = tech_stack.lower()
+        if any(kw in tech for kw in ("php", "laravel", "symfony")):
+            wl_str = _write_temp_wordlist("php", _PHP_WORDLIST)
+        elif any(kw in tech for kw in ("java", "spring", "tomcat", "jboss")):
+            wl_str = _write_temp_wordlist("java", _JAVA_SPRING_WORDLIST)
+        elif any(kw in tech for kw in ("node", "express", "next.js")):
+            wl_str = _write_temp_wordlist("node", _NODEJS_WORDLIST)
+        else:
+            wl_str = _BUNDLED_WORDLIST
 
     cmd = []
     for tok in spec.base_cmd:
@@ -283,6 +316,16 @@ def build_command(
         cmd.extend(extra_args)
 
     return cmd
+
+
+def _write_temp_wordlist(name: str, payload_list: list[str]) -> str:
+    """Helper to write a dynamic wordlist to tmp/ and return its path."""
+    tmp_dir = Path("tmp")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    out_path = tmp_dir / f"wordlist_{name}.txt"
+    if not out_path.exists():
+        out_path.write_text("\n".join(payload_list), encoding="utf-8")
+    return str(out_path)
 
 
 def get_tool_descriptions(category_filter: str | None = None) -> str:

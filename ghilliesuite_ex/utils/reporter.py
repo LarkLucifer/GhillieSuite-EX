@@ -96,6 +96,25 @@ class HtmlReporter:
         self.console.print(f"[cyan]  Generating AI summaries for {len(findings)} finding(s)…[/cyan]")
         enriched = await self._enrich_findings(findings, hosts)
 
+        # ── Capture Visual Evidence ───────────────────────────────────────────────
+        screenshot_base64 = ""
+        self.console.print(f"[cyan]  Capturing Visual Evidence for {target}…[/cyan]")
+        try:
+            from playwright.async_api import async_playwright
+            import base64
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                target_url = target if target.startswith("http") else f"https://{target}"
+                await page.goto(target_url, wait_until="networkidle", timeout=15000)
+                screenshot_bytes = await page.screenshot(type="jpeg", quality=60)
+                screenshot_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
+                await browser.close()
+        except ImportError:
+            self.console.print("[dim]  playwright not available, skipping screenshot.[/dim]")
+        except Exception as e:
+            self.console.print(f"[yellow]  ⚠ Screenshot failed: {e}[/yellow]")
+
         html_content = _render_html(
             target=target,
             scope=scope,
@@ -103,6 +122,7 @@ class HtmlReporter:
             findings=enriched,
             hosts=hosts,
             endpoints=endpoints,
+            screenshot_base64=screenshot_base64,
         )
 
         html_path.write_text(html_content, encoding="utf-8")
@@ -135,11 +155,16 @@ class HtmlReporter:
             host_status = matched_host.status_code if matched_host else ""
             host_tech = matched_host.tech_stack if matched_host else ""
 
+            # Dynamic Severity Promotion
+            sev_str = f.severity.lower()
+            if "BOLA/IDOR Detected" in f.title or "GraphQL Introspection Enabled" in f.title:
+                sev_str = "critical"
+
             enriched.append({
                 "id":                 f.id,
                 "tool":               f.tool,
                 "target":             f.target,
-                "severity":           f.severity.lower(),
+                "severity":           sev_str,
                 "title":              f.title,
                 "evidence":           f.evidence,
                 "reproducible_steps": f.reproducible_steps,
@@ -229,15 +254,20 @@ def _render_html(
     findings: list[dict[str, Any]],
     hosts: list[Host],
     endpoints: list[Endpoint],
+    screenshot_base64: str = "",
 ) -> str:
-    # Filter out endpoints that belong to hosts with 404/inactive status
-    inactive_domains = {h.domain for h in hosts if getattr(h, "status_code", 0) >= 400}
+    # Filter out inactive hosts and their endpoints
+    active_hosts = [h for h in hosts if 200 <= getattr(h, "status_code", 0) < 400]
+    active_domains = {h.domain for h in active_hosts}
+    
     active_endpoints = []
     for ep in endpoints:
         domain = ep.url.split("//")[-1].split("/")[0].split(":")[0]
-        if domain not in inactive_domains:
+        if domain in active_domains:
             active_endpoints.append(ep)
+            
     endpoints = active_endpoints
+    hosts = active_hosts
 
     total = len(findings)
     counts = {s: sum(1 for f in findings if f["severity"] == s) for s in _SEVERITY_ORDER}
@@ -284,6 +314,7 @@ def _render_html(
       <div class="text-right text-xs text-gray-500">
         <p>Generated: {_e(generated_at)}</p>
         <p>Scope: {_e(', '.join(scope))}</p>
+        {f'<img src="data:image/jpeg;base64,{screenshot_base64}" class="mt-3 rounded border border-gray-700 w-48 shadow-lg inline-block" alt="Target Visual Evidence">' if screenshot_base64 else ''}
       </div>
     </div>
   </header>
@@ -452,6 +483,7 @@ def _finding_card(f: dict[str, Any]) -> str:
     is_advisory = tool_name in _ADVISORY_TOOLS
 
     advisory_badge = '<span class="text-xs bg-purple-700 text-white px-2 py-0.5 rounded-full ml-2">Passive Advisory</span>' if is_advisory else ""
+    verified_badge = '<span class="text-xs bg-red-600 border border-red-400 text-white px-2 py-0.5 rounded-full ml-2 font-bold shadow-[0_0_8px_rgba(220,38,38,0.8)]">VERIFIED</span>' if tool_name in ("dalfox", "sqlmap") or "BOLA/IDOR Detected" in _e(f.get('title','')) or "GraphQL Introspection" in _e(f.get('title','')) else ""
     
     status_str = f"HTTP {h_status}" if h_status else "Status Unknown"
     tech_str = f" • Tech: {h_tech}" if h_tech else ""
@@ -471,6 +503,7 @@ def _finding_card(f: dict[str, Any]) -> str:
             <div class="flex items-center gap-2 flex-wrap">
               <span class="{badge_cls} text-white text-xs font-semibold px-2 py-0.5 rounded-full uppercase">{_e(sev)}</span>
               {advisory_badge}
+              {verified_badge}
               <span class="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full font-mono">{_e(tool_name)}</span>
             </div>
             <h3 class="text-white font-semibold text-base mt-2">{emoji} {_e(f.get('title',''))}</h3>
@@ -497,7 +530,7 @@ def _finding_card(f: dict[str, Any]) -> str:
         <!-- Evidence &amp; Reproducible Steps (Prominent) -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-800">
           <div>
-            <p class="text-gray-500 text-xs uppercase font-semibold mb-2">Evidence &amp; Target Details</p>
+            <p class="text-gray-500 text-xs uppercase font-semibold mb-2">Technical Evidence</p>
             <div class="bg-gray-950 border border-gray-800 rounded-lg p-3 space-y-2">
               <p class="text-emerald-400 font-mono text-xs break-all">URL: {target_url}</p>
               <p class="text-gray-400 font-mono text-xs">Response: {status_str}{tech_str}</p>

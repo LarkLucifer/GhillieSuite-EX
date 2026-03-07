@@ -60,8 +60,12 @@ class ReconAgent(BaseAgent):
         # Resolve auth headers once — shared by httpx and katana
         auth_headers = self.cfg.auth_headers_flags  # [] if no auth configured
 
-        # ── Phase 1: Concurrent subfinder + gau ───────────────────────────
+        # ── Phase 1: Concurrent subfinder + gau (with Redundancy Check) ───
         self.console.print(f"[cyan]  Phase 1 — Concurrent: subfinder + gau → {target}[/cyan]")
+
+        root_domain = target.split("//")[-1].split("/")[0].split(":")[0]
+        sf_history: set[str] = getattr(self.cfg, "_subfinder_history", set())
+        run_sf = root_domain not in sf_history
 
         sf_cmd = build_command(
             "subfinder", target,
@@ -70,29 +74,41 @@ class ReconAgent(BaseAgent):
         gau_cmd = build_command("gau", target)
 
         with Status("[cyan]Running subfinder + gau concurrently…[/cyan]", console=self.console):
-            sf_result, gau_result = await asyncio.gather(
-                run_tool_to_file(sf_cmd, _SUBFINDER_OUT, timeout=timeout),
-                run_tool(gau_cmd, timeout=timeout),
-                return_exceptions=False,
-            )
+            tasks = [run_tool(gau_cmd, timeout=timeout)]
+            if run_sf:
+                tasks.insert(0, run_tool_to_file(sf_cmd, _SUBFINDER_OUT, timeout=timeout))
+                sf_history.add(root_domain)
+                setattr(self.cfg, "_subfinder_history", sf_history)
+
+            results = await asyncio.gather(*tasks, return_exceptions=False)
+            
+            if run_sf:
+                sf_result = results[0]
+                gau_result = results[1]
+            else:
+                sf_result = None
+                gau_result = results[0]
 
         # ── Parse subfinder (read from output file) ────────────────────────
         subdomains: list[str] = []
-        if sf_result.ok or sf_result.output_file:
+        if sf_result and (sf_result.ok or sf_result.output_file):
             parsed = parse_subfinder(output_path=sf_result.output_file or _SUBFINDER_OUT)
             raw_domains = [r["domain"] for r in parsed]
             subdomains = scope_filter_domains(raw_domains, self.scope)
             for domain in subdomains:
                 await self.db.insert_host(Host(domain=domain))
                 items_added += 1
-        else:
+        elif sf_result:
             self.console.print(f"[dim]subfinder: {sf_result.error or sf_result.stderr[:100]}[/dim]")
+        else:
+            self.console.print(f"[dim]subfinder: skipped (root domain {root_domain} already scanned)[/dim]")
 
-        tool_result_panel(
-            self.console, "subfinder",
-            sf_cmd, sf_result.ok or bool(sf_result.output_file),
-            f"Found {len(subdomains)} in-scope subdomain(s)",
-        )
+        if sf_result:
+            tool_result_panel(
+                self.console, "subfinder",
+                sf_cmd, sf_result.ok or bool(sf_result.output_file),
+                f"Found {len(subdomains)} in-scope subdomain(s)",
+            )
 
         # ── Parse gau (smart-filtered high-value URLs only) ────────────────
         if gau_result.ok:

@@ -154,7 +154,17 @@ def hunt(
         force_auto=force_auto,
     )
 
-    asyncio.run(coro)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # If we are already inside a running event loop (e.g. Jupyter, some IDEs),
+        # create a task instead of asyncio.run
+        loop.create_task(coro)
+    else:
+        asyncio.run(coro)
 
 
 async def _async_hunt(
@@ -254,6 +264,28 @@ async def _async_hunt(
 
     # ── Initialise AI client ───────────────────────────────────────────────
     ai_client = _build_ai_client(cfg)
+
+    # ── Environment sanity checks ──────────────────────────────────────────
+    import os
+    import sqlite3
+
+    db_file = cfg.db_path
+    if os.path.exists(db_file):
+        try:
+            with sqlite3.connect(db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM meta WHERE key = 'target'")
+                row = cursor.fetchone()
+                if row and row[0] != target:
+                    console.print(f"[bold yellow]⚠ Stored target '{row[0]}' differs from current '{target}'. Shredding old DB to prevent data mixing.[/bold yellow]")
+                    conn.close()
+                    os.remove(db_file)
+        except Exception:
+            # If the database is malformed or locked, safest approach is deletion
+            try:
+                os.remove(db_file)
+            except OSError:
+                pass
 
     # ── Initialise DB and run supervisor ──────────────────────────────────
     console.print()
