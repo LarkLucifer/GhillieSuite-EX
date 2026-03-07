@@ -230,6 +230,15 @@ def _render_html(
     hosts: list[Host],
     endpoints: list[Endpoint],
 ) -> str:
+    # Filter out endpoints that belong to hosts with 404/inactive status
+    inactive_domains = {h.domain for h in hosts if getattr(h, "status_code", 0) >= 400}
+    active_endpoints = []
+    for ep in endpoints:
+        domain = ep.url.split("//")[-1].split("/")[0].split(":")[0]
+        if domain not in inactive_domains:
+            active_endpoints.append(ep)
+    endpoints = active_endpoints
+
     total = len(findings)
     counts = {s: sum(1 for f in findings if f["severity"] == s) for s in _SEVERITY_ORDER}
 
