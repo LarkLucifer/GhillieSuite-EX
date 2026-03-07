@@ -1,0 +1,49 @@
+# ========================
+# Kredensial & Secrets (SANGAT PENTING)
+# ========================
+.env
+.env.backup
+credentials.json
+
+# ========================
+# Database Lokal (Memory AI)
+# ========================
+*.db
+*.sqlite
+*.sqlite3
+hcli_state.db
+
+# ========================
+# Output & Laporan Hasil Scan
+# ========================
+reports/
+output/
+*.json
+# Kecualikan README.md agar tetap ter-upload
+!README.md 
+!scope_example.txt
+
+# ========================
+# Python & Build Artifacts
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# ========================
+# Virtual Environment
+# ========================
+venv/
+.venv/
+env/
+
+# ========================
+# OS & IDE Files
+# ========================
+.vscode/
+.idea/
+.DS_Store

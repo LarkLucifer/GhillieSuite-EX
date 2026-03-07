@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hcli-sec"
+version = "0.1.0"
+description = "AI-automated Bug Bounty Orchestrator for HackerOne — multi-agent, async, scope-enforced."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "hcli.sec" }]
+keywords = ["bugbounty", "pentest", "security", "ai", "automation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Security",
+]
+dependencies = [
+    "typer[all]>=0.12",
+    "rich>=13",
+    "google-generativeai>=0.7",
+    "httpx[http2]>=0.27",
+    "python-dotenv>=1.0",
+    "aiosqlite>=0.20",
+]
+
+[project.scripts]
+# Install with:  pip install -e .
+# Run with:      hcli.sec hunt --target example.com --scope scope.txt
+"hcli.sec" = "hcli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hcli*"]
+
+[tool.setuptools.package-data]
+"hcli" = ["py.typed"]
