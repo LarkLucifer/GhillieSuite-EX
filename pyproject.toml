@@ -28,6 +28,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "aiosqlite>=0.20",
     "nest-asyncio>=1.5",
+    "playwright>=1.43",
 ]
 
 [project.scripts]

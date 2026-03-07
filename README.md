@@ -34,6 +34,7 @@ StateDB (SQLite via aiosqlite)
 git clone <repo>
 cd GhillieSuite-EX
 pip install -e .
+playwright install chromium
 ```
 
 ### 2. Configure
@@ -117,23 +118,35 @@ GhillieSuite-EX.sec version       Show version
 | CVE / misconfiguration scan | nuclei | Critical only |
 | XSS exploitation | dalfox | ✅ Always |
 | SQL injection | sqlmap | ✅ Always |
-| **Directory brute-force** | **ffuf** | — (Auto) |
+| **Directory brute-force** | **ffuf (Context-Aware)** | — (Auto) |
 | **SSRF parameter fuzzing** | **ffuf** | **✅ Always** (unless `--force-auto`) |
 | **BOLA / IDOR detection** | Active Differential Analysis | — |
+| **React 19 RSC Parsing** | Active Leak Discovery | — |
+| **Prototype Pollution** | Playwright Sandbox Verification | — |
+| **WebSocket Hijacking** | Active CSWSH Probing | — |
 | **AI/LLM Prompt Injection** | Passive advisor | — |
-| Secret scanning | trufflehog | — |
+| Secret scanning | trufflehog / Regex | — |
 
 ### False Positive Suppression & HTTP Validation
 All discovered findings pass through an `httpx` validation layer. 404 endpoints are downgraded to `info` (`[Historical/Inactive]`), and pages returning 200 OK with "Access Denied" or "Login Required" text in the body are flagged as `[False Positive / Fake 200]` to save triage time.
 
-### BOLA/IDOR Detection (Differential Analysis)
-The ExploitAgent scans endpoints for integer (`/user/123`) and UUID segments. When an integer ID is found, it performs active **Differential Analysis** using `httpx` to fuzz `id+1` and `id-1`. If the HTTP response length changes significantly, the finding is automatically elevated to a **HIGH CONFIDENCE** status.
+### Context-Aware Orchestration (TechStackDetector)
+`ffuf` is dynamically injected with smart wordlists based on the detected tech stack (`PHP/Laravel`, `Java/Spring`, `Node.js`), drastically optimizing the directory brute-force phase.
 
-### SSRF Parameter Fuzzing
-Endpoints with SSRF-prone parameters (`url`, `path`, `redirect`, `next`, `dest`, `callback`, `proxy`, etc.) are automatically flagged. A **high** severity advisory is stored with cloud metadata endpoint payloads (AWS IMDS, GCP metadata, internal port scan).
+### Deep Research & Execution (Tier 6-8)
+- **Prototype Pollution 2.0**: JS sinks are dynamically tested in a headless `playwright` sandbox to actively verify standard payload injections via `Object.assign`. Successfully poisoned objects are auto-promoted to critical severity with a VERIFIED label.
+- **React 19 / Next.js Flight**: Inspects `.json` paths and passes custom `RSC: 1` headers to intercept React Server Component leaks to decode hardcoded developer secrets and insecure prop drilling payloads.
+- **WebSocket Piracy**: Analyzes discovered `ws://` / `wss://` sockets for unauthenticated event ingestion (`{event: "auth"}`) and Cross-Site WebSocket Hijacking (CSWSH) without SOP blocking.
+
+### BOLA/IDOR Detection (Differential Analysis)
+The ExploitAgent scans endpoints for integer (`/user/123`) and UUID segments. When an integer ID is found, it performs active **Differential Analysis** using `httpx` to fuzz `id+1` and `id-1`. If the HTTP response length changes significantly, the finding is automatically elevated to a **CRITICAL** status with a glowing red **VERIFIED** HTML badge.
+
+### Smart Looping & Anti-Redundancy
+- **AgentSwarm Pivot**: Tools are tracked globally for zero-finding returns. Three consecutive failures on specific endpoints result in an immediate pivot to a completely new attack vector, preventing infinite dead-end probing.
+- **Recon Synergy**: `subfinder` execution is aborted for root domains natively crawled by `katana` within the same cycle.
 
 ### AI / LLM Prompt Injection
-When httpx detects an AI/chatbot tech stack (`ChatGPT`, `LangChain`, `Copilot`, `llm`, etc.), the host is tagged and a **high** severity advisory is stored with 8 curated prompt injection payloads covering direct, indirect, and template-injection vectors.
+When httpx detects an AI/chatbot tech stack (`ChatGPT`, `LangChain`, `Copilot`, `llm`, etc.), the host is tagged and a **high** severity advisory is stored with 8 curated prompt injection payloads (direct/indirect/template).
 
 ---
 
@@ -197,7 +210,7 @@ If both are set, **OpenAI takes priority**.
 
 Saved to `reports/` after each hunt:
 
-- `<target>_<timestamp>.html` — polished, automated Tailwind CSS dashboard with AI-generated plain-English translations.
+- `<target>_<timestamp>.html` — polished, automated Tailwind CSS dashboard with AI-generated plain-English translations. Features **Visual Evidence** (Base64 target browser screenshots) and **Dynamic Severity** (auto-promotion of BOLA/GraphQL hits to `CRITICAL` with a glowing red `VERIFIED` badge).
 - `<target>_<timestamp>.json` — machine-readable, all findings, hosts, endpoints.
 
 ---
