@@ -37,7 +37,7 @@ from ghilliesuite_ex.state.db import StateDB
 from ghilliesuite_ex.state.models import Finding, Host, Endpoint
 
 
-# ── Severity metadata ─────────────────────────────────────────────────────────
+# ── Severity metadata ─────────────────────────────────────────────────────────────────────
 _SEV_META: dict[str, dict[str, str]] = {
     "critical": {"color": "red",    "badge": "bg-red-600",    "border": "border-red-500",  "ring": "ring-red-500",  "emoji": "🔴"},
     "high":     {"color": "orange", "badge": "bg-orange-500", "border": "border-orange-400","ring": "ring-orange-400","emoji": "🟠"},
@@ -47,7 +47,10 @@ _SEV_META: dict[str, dict[str, str]] = {
 }
 _SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"]
 
-# ── Advisory tool names (passive, rendered in separate section) ───────────────
+# Severities shown by default in the main section ("hot" findings)
+_HOT_SEVERITIES = frozenset({"critical", "high", "medium"})
+
+# ── Advisory tool names (passive, rendered in separate section) ─────────────────
 _ADVISORY_TOOLS = frozenset({"bola_check", "ai_advisory"})
 
 
@@ -140,6 +143,7 @@ class HtmlReporter:
                 "title":              f.title,
                 "evidence":           f.evidence,
                 "reproducible_steps": f.reproducible_steps,
+                "raw_output":         f.raw_output,
                 "timestamp":          f.timestamp,
                 "what_is_it":         title_cache[f.title].get("what_is_it", ""),
                 "impact":             title_cache[f.title].get("impact", ""),
@@ -229,9 +233,10 @@ def _render_html(
     total = len(findings)
     counts = {s: sum(1 for f in findings if f["severity"] == s) for s in _SEVERITY_ORDER}
 
-    # Separate technical findings from passive advisories
-    tech_findings = [f for f in findings if f["tool"] not in _ADVISORY_TOOLS]
+    # Separate hot (actionable) findings from passive advisories and low/info noise
+    hot_findings  = [f for f in findings if f["severity"] in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
     advisories    = [f for f in findings if f["tool"] in _ADVISORY_TOOLS]
+    cold_findings = [f for f in findings if f["severity"] not in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -247,14 +252,16 @@ def _render_html(
     .finding-card:hover {{ transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); }}
     details > summary {{ cursor: pointer; list-style: none; }}
     details > summary::-webkit-details-marker {{ display: none; }}
-    details[open] .chevron {{ transform: rotate(180deg); }}
-    .chevron {{ transition: transform 0.2s ease; display: inline-block; }}
     pre {{ white-space: pre-wrap; word-break: break-word; }}
+    .filter-btn {{ transition: all 0.15s ease; }}
+    .filter-btn.active {{ box-shadow: 0 0 0 2px rgba(16,185,129,0.6); }}
+    .finding-card[data-severity] {{ display: block; }}
+    .finding-card.hidden {{ display: none !important; }}
   </style>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen">
 
-  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <!-- ── Header ───────────────────────────────────────────────────────── -->
   <header class="bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 border-b border-gray-700 px-8 py-6">
     <div class="max-w-7xl mx-auto flex items-center justify-between">
       <div>
@@ -274,7 +281,7 @@ def _render_html(
 
   <main class="max-w-7xl mx-auto px-8 py-8 space-y-10">
 
-    <!-- ── Dashboard ──────────────────────────────────────────────────────── -->
+    <!-- ── Dashboard ───────────────────────────────────────────────────────── -->
     <section>
       <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs">Executive Summary</h2>
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
@@ -287,25 +294,64 @@ def _render_html(
       </div>
     </section>
 
-    <!-- ── Technical Findings ─────────────────────────────────────────────── -->
-    <section>
-      <h2 class="text-lg font-semibold text-gray-300 mb-5 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
-        Vulnerability Findings ({len(tech_findings)})
-      </h2>
-      {"".join(_finding_card(f) for f in tech_findings) if tech_findings else _empty_state("No active vulnerabilities detected.")}
+    <!-- ── Hot Findings (Critical / High / Medium) ────────────────────────── -->
+    <section id="hot-findings">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold text-gray-300 uppercase tracking-widest text-xs border-b border-gray-800 pb-2 flex-1">
+          🔥 Active Vulnerability Findings ({len(hot_findings)})
+        </h2>
+      </div>
+
+      <!-- Severity filter bar -->
+      <div class="flex gap-2 mb-5 flex-wrap" id="filter-bar">
+        <button class="filter-btn active text-xs px-3 py-1.5 rounded-full bg-gray-700 text-white font-semibold"
+                data-filter="all" onclick="filterFindings('all', this)">
+          ALL ({len(hot_findings)})
+        </button>
+        <button class="filter-btn text-xs px-3 py-1.5 rounded-full bg-red-900 text-red-200 font-semibold"
+                data-filter="critical" onclick="filterFindings('critical', this)">
+          🔴 CRITICAL ({counts['critical']})
+        </button>
+        <button class="filter-btn text-xs px-3 py-1.5 rounded-full bg-orange-900 text-orange-200 font-semibold"
+                data-filter="high" onclick="filterFindings('high', this)">
+          🟠 HIGH ({counts['high']})
+        </button>
+        <button class="filter-btn text-xs px-3 py-1.5 rounded-full bg-yellow-900 text-yellow-200 font-semibold"
+                data-filter="medium" onclick="filterFindings('medium', this)">
+          🟡 MEDIUM ({counts['medium']})
+        </button>
+      </div>
+
+      <div id="findings-container">
+        {"".join(_finding_card(f) for f in hot_findings) if hot_findings else _empty_state("No critical/high/medium vulnerabilities detected. 🎉")}
+      </div>
     </section>
 
-    <!-- ── Advisories ─────────────────────────────────────────────────────── -->
+    <!-- ── Advisories ───────────────────────────────────────────────────────────── -->
     {"" if not advisories else f'''
     <section>
       <h2 class="text-lg font-semibold text-gray-300 mb-5 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
-        ⚡ Automated Advisories — BOLA/IDOR & AI Injection ({len(advisories)})
+        ⚡ Automated Advisories — BOLA/IDOR &amp; AI Injection ({len(advisories)})
       </h2>
-      <p class="text-gray-500 text-sm mb-4">These findings were generated by passive analysis — no active exploit traffic was sent. Verify manually.</p>
+      <p class="text-gray-500 text-sm mb-4">Passive analysis only — no active exploit traffic sent. Verify manually.</p>
       {"".join(_finding_card(f) for f in advisories)}
     </section>'''}
 
-    <!-- ── Hosts appendix ─────────────────────────────────────────────────── -->
+    <!-- ── Low / Info (collapsed) ────────────────────────────────────────────── -->
+    {"" if not cold_findings else f'''
+    <section>
+      <details class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <summary class="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-800 transition-colors">
+          <span class="text-sm font-semibold text-gray-400">⚪ Low / Info Findings ({len(cold_findings)}) — click to expand</span>
+          <span class="text-gray-600 text-xs">These are low-priority or informational — review when time allows.</span>
+        </summary>
+        <div class="p-4 space-y-4">
+          {"".join(_finding_card(f) for f in cold_findings)}
+        </div>
+      </details>
+    </section>'''}
+
+    <!-- ── Hosts appendix ─────────────────────────────────────────────────────────── -->
     {"" if not hosts else f'''
     <section>
       <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
@@ -327,7 +373,7 @@ def _render_html(
       </div>
     </section>'''}
 
-    <!-- ── High-value endpoints ───────────────────────────────────────────── -->
+    <!-- ── High-value endpoints ──────────────────────────────────────────────────── -->
     {"" if not endpoints else f'''
     <section>
       <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
@@ -348,14 +394,20 @@ def _render_html(
   </footer>
 
   <script>
-    // Smooth keyboard navigation for details elements
-    document.querySelectorAll('details').forEach(d => {{
-      d.addEventListener('toggle', () => {{
-        d.querySelectorAll('.chevron').forEach(c => {{
-          c.style.transform = d.open ? 'rotate(180deg)' : 'rotate(0deg)';
-        }});
+    function filterFindings(severity, btn) {{
+      // Update active button
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Show/hide cards
+      document.querySelectorAll('#findings-container .finding-card').forEach(card => {{
+        if (severity === 'all' || card.dataset.severity === severity) {{
+          card.classList.remove('hidden');
+        }} else {{
+          card.classList.add('hidden');
+        }}
       }});
-    }});
+    }}
   </script>
 </body>
 </html>"""
@@ -381,6 +433,9 @@ def _finding_card(f: dict[str, Any]) -> str:
     remediation = _e(f.get("remediation", ""))
     evidence    = _e(f.get("evidence",    "") or "N/A")
     steps       = _e(f.get("reproducible_steps", "") or "No steps provided.")
+    raw_out     = f.get("raw_output", "") or ""
+    # Truncate and escape raw output for display
+    raw_display = _e(raw_out[:800]) if raw_out.strip() else ""
     tool_name   = f.get("tool", "")
     target_url  = f.get("target", "")
     h_status    = f.get("host_status", "")
@@ -392,8 +447,14 @@ def _finding_card(f: dict[str, Any]) -> str:
     status_str = f"HTTP {h_status}" if h_status else "Status Unknown"
     tech_str = f" • Tech: {h_tech}" if h_tech else ""
 
+    proof_block = f"""
+            <div class="mt-3">
+              <p class="text-emerald-500 text-xs uppercase font-semibold mb-1">🔬 Proof / Raw Tool Output</p>
+              <pre class="bg-black border border-emerald-900/50 rounded-lg p-3 text-xs text-emerald-300 overflow-x-auto max-h-40">{raw_display}</pre>
+            </div>""" if raw_display else ""
+
     return f"""
-    <div class="finding-card bg-gray-900 border-l-4 {border_cls} rounded-xl mb-4 overflow-hidden">
+    <div class="finding-card bg-gray-900 border-l-4 {border_cls} rounded-xl mb-4 overflow-hidden" data-severity="{_e(sev)}">
       <div class="px-6 py-4">
         <!-- Header row -->
         <div class="flex items-start justify-between gap-4 mb-3">
@@ -424,14 +485,15 @@ def _finding_card(f: dict[str, Any]) -> str:
           </div>
         </div>
 
-        <!-- Evidence & Reproducible Steps (Prominent) -->
+        <!-- Evidence &amp; Reproducible Steps (Prominent) -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-800">
           <div>
-            <p class="text-gray-500 text-xs uppercase font-semibold mb-2">Evidence & Target Details</p>
+            <p class="text-gray-500 text-xs uppercase font-semibold mb-2">Evidence &amp; Target Details</p>
             <div class="bg-gray-950 border border-gray-800 rounded-lg p-3 space-y-2">
               <p class="text-emerald-400 font-mono text-xs break-all">URL: {target_url}</p>
               <p class="text-gray-400 font-mono text-xs">Response: {status_str}{tech_str}</p>
               <pre class="text-xs text-gray-400 mt-2 overflow-x-auto whitespace-pre-wrap">{evidence}</pre>
+              {proof_block}
             </div>
           </div>
           <div>
