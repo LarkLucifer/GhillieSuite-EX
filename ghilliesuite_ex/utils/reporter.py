@@ -91,7 +91,7 @@ class HtmlReporter:
         endpoints: list[Endpoint] = await self.db.get_endpoints()
 
         self.console.print(f"[cyan]  Generating AI summaries for {len(findings)} finding(s)…[/cyan]")
-        enriched = await self._enrich_findings(findings)
+        enriched = await self._enrich_findings(findings, hosts)
 
         html_content = _render_html(
             target=target,
@@ -111,6 +111,7 @@ class HtmlReporter:
     async def _enrich_findings(
         self,
         findings: list[Finding],
+        hosts: list[Host],
     ) -> list[dict[str, Any]]:
         """
         For each finding, ask the AI for plain-English explanation, impact, and remediation.
