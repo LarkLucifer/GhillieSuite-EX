@@ -141,20 +141,30 @@ def hunt(
     in an intelligent loop, storing all state in a local SQLite database.
     A JSON + Markdown report is saved to the OUTPUT directory on completion.
     """
-    asyncio.run(
-        _async_hunt(
-            target=target,
-            scope_input=scope,
-            output_dir=output,
-            max_loops=max_loops,
-            timeout=timeout,
-            safe_mode=safe_mode,
-            update_templates=update_templates,
-            cookie=cookie,
-            header=header,
-            force_auto=force_auto,
-        )
+    coro = _async_hunt(
+        target=target,
+        scope_input=scope,
+        output_dir=output,
+        max_loops=max_loops,
+        timeout=timeout,
+        safe_mode=safe_mode,
+        update_templates=update_templates,
+        cookie=cookie,
+        header=header,
+        force_auto=force_auto,
     )
+
+    # Guard against "asyncio.run() cannot be called from a running event loop"
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import nest_asyncio
+        nest_asyncio.apply()
+
+    asyncio.run(coro)
 
 
 async def _async_hunt(
