@@ -173,7 +173,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         scope_flag="url {target}",
         category="Exploitation",
         parser="dalfox",
-        hitl_required=True,
+        hitl_required=False,
         description="XSS scanner and exploitation tool — discovers reflected, stored, and DOM XSS.",
     ),
 
@@ -187,7 +187,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         scope_flag="-u {target}",
         category="Exploitation",
         parser="sqlmap",
-        hitl_required=True,
+        hitl_required=False,
         description="SQL injection detection and exploitation — tests GET/POST params and forms.",
     ),
 

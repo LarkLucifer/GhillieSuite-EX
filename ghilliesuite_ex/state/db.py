@@ -29,6 +29,11 @@ from .models import CVEResult, Endpoint, Finding, Host
 
 # ── DDL ───────────────────────────────────────────────────────────────────────
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS hosts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     domain       TEXT    NOT NULL UNIQUE,
@@ -73,6 +78,9 @@ CREATE TABLE IF NOT EXISTS cve_cache (
 );
 """
 
+# Tables that hold per-target scan data — wiped when target changes
+_DATA_TABLES = ["findings", "endpoints", "hosts", "cve_cache"]
+
 
 class StateDB:
     """
@@ -83,8 +91,9 @@ class StateDB:
             await db.insert_host(host)
     """
 
-    def __init__(self, db_path: str = ".ghilliesuite_state.db") -> None:
+    def __init__(self, db_path: str = ".ghilliesuite_state.db", target: str | None = None) -> None:
         self._path = db_path
+        self._target = target
         self._conn: aiosqlite.Connection | None = None
 
     # ── Context manager ───────────────────────────────────────────────────────
@@ -94,6 +103,30 @@ class StateDB:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.executescript(SCHEMA_SQL)
         await self._conn.commit()
+
+        # ── Target-change detection ───────────────────────────────────────────
+        # If the caller supplies a target and it differs from the stored one,
+        # wipe all per-target data so old scan results never contaminate a new hunt.
+        if self._target is not None:
+            row = await (await self._conn.execute(
+                "SELECT value FROM meta WHERE key = 'target'"
+            )).fetchone()
+            stored_target = row["value"] if row else None
+
+            if stored_target != self._target:
+                # Drop and recreate all data tables
+                drop_sql = "\n".join(
+                    f"DROP TABLE IF EXISTS {t};" for t in _DATA_TABLES
+                )
+                await self._conn.executescript(drop_sql)
+                await self._conn.executescript(SCHEMA_SQL)
+                # Persist the new target
+                await self._conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('target', ?)",
+                    (self._target,),
+                )
+                await self._conn.commit()
+
         return self
 
     async def __aexit__(self, *_) -> None:

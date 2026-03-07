@@ -154,16 +154,6 @@ def hunt(
         force_auto=force_auto,
     )
 
-    # Guard against "asyncio.run() cannot be called from a running event loop"
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        import nest_asyncio
-        nest_asyncio.apply()
-
     asyncio.run(coro)
 
 
@@ -272,7 +262,7 @@ async def _async_hunt(
     cfg.max_agent_loops = max_loops
     cfg.default_timeout = timeout
 
-    async with StateDB(cfg.db_path) as db:
+    async with StateDB(cfg.db_path, target=target) as db:
         supervisor = SupervisorAgent(
             db=db,
             ai_client=ai_client,
