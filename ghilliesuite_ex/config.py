@@ -1,5 +1,5 @@
 """
-hcli/config.py
+ghilliesuite_ex/config.py
 ──────────────
 Centralised configuration loader with AUTO-DETECT AI provider.
 
@@ -92,7 +92,7 @@ class Config:
 
     # ── SQLite state DB path
     db_path: str = field(
-        default_factory=lambda: os.getenv("DB_PATH", ".hcli_state.db")
+        default_factory=lambda: os.getenv("DB_PATH", ".ghilliesuite_state.db")
     )
 
     # ── Tools that ALWAYS require Human-in-the-Loop confirmation
@@ -104,6 +104,37 @@ class Config:
     nuclei_hitl_severities: frozenset[str] = field(
         default_factory=lambda: frozenset({"critical"})
     )
+
+    # ── Authenticated scanning — set at runtime by the CLI (not from .env)
+    # These are intentionally not loaded from environment variables because
+    # session cookies/tokens change per engagement and should never be stored
+    # persistently in .env files.
+    auth_cookie: str = ""
+    """Value of --cookie CLI flag. e.g. 'session=abc123; csrf=xyz'"""
+
+    auth_header: str = ""
+    """Value of --header CLI flag. e.g. 'Authorization: Bearer eyJ...' """
+
+    @property
+    def auth_headers_flags(self) -> list[str]:
+        """
+        Build the flat -H flag list consumed by build_command(auth_headers=...).
+        Returns an empty list when no auth has been configured.
+
+        Example output when both are set:
+          ["-H", "Cookie: session=abc", "-H", "Authorization: Bearer xyz"]
+        """
+        flags: list[str] = []
+        if self.auth_cookie:
+            flags += ["-H", f"Cookie: {self.auth_cookie}"]
+        if self.auth_header:
+            flags += ["-H", self.auth_header]
+        return flags
+
+    @property
+    def is_authenticated(self) -> bool:
+        """True when any auth credential has been configured."""
+        return bool(self.auth_cookie or self.auth_header)
 
     def __post_init__(self) -> None:
         """Run auto-detection immediately after the dataclass is initialised."""
