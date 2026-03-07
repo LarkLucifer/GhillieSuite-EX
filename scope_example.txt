@@ -1,7 +1,7 @@
-# hcli.sec scope file — one entry per line.
+# GhillieSuite-EX scope file — one entry per line.
 # Wildcards: *.example.com includes all subdomains.
 # Lines starting with '#' are comments and are ignored.
-# Pass this file via:  hcli.sec hunt --target example.com --scope scope_example.txt
+# Pass this file via:  GhillieSuite-EX.sec hunt --target example.com --scope scope_example.txt
 
 example.com
 *.example.com

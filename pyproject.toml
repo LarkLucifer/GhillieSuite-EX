@@ -3,13 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hcli-sec"
+name = "GhillieSuite-EX"
 version = "0.1.0"
 description = "AI-automated Bug Bounty Orchestrator for HackerOne — multi-agent, async, scope-enforced."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "hcli.sec" }]
+authors = [{ name = "GhillieSuite-EX" }]
 keywords = ["bugbounty", "pentest", "security", "ai", "automation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -23,6 +23,7 @@ dependencies = [
     "typer[all]>=0.12",
     "rich>=13",
     "google-generativeai>=0.7",
+    "openai>=1.30",
     "httpx[http2]>=0.27",
     "python-dotenv>=1.0",
     "aiosqlite>=0.20",
@@ -30,12 +31,12 @@ dependencies = [
 
 [project.scripts]
 # Install with:  pip install -e .
-# Run with:      hcli.sec hunt --target example.com --scope scope.txt
-"hcli.sec" = "hcli.main:app"
+# Run with:      GhillieSuite-EX.sec hunt --target example.com --scope scope.txt
+"GhillieSuite-EX.sec" = "ghilliesuite_ex.main:app"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["hcli*"]
+include = ["ghilliesuite_ex*"]
 
 [tool.setuptools.package-data]
-"hcli" = ["py.typed"]
+"ghilliesuite_ex" = ["py.typed"]

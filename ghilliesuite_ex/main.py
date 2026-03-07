@@ -1,14 +1,18 @@
 """
-hcli/main.py
-────────────
-Typer CLI entrypoint for hcli.sec.
+ghilliesuite_ex/main.py
+─────────────────────
+Typer CLI entrypoint for GhillieSuite-EX.sec.
 
 Install:   pip install -e .
-Run:       hcli.sec hunt --target example.com --scope scope.txt
+Run:       GhillieSuite-EX.sec hunt --target example.com --scope scope.txt
 
 AI Provider is AUTO-DETECTED from .env — no --ai-provider flag needed:
   OPENAI_API_KEY=sk-...   → OpenAI (gpt-4o-mini)
   GEMINI_API_KEY=AIza...  → Google Gemini (gemini-2.5-pro)
+
+Authentication flags (optional, injected into all active tools):
+  --cookie "session=abc123"              → adds -H "Cookie: session=abc123"
+  --header "Authorization: Bearer xyz"  → adds -H "Authorization: Bearer xyz"
 
 Available commands:
   hunt          — Start a full AI-driven bug bounty hunt.
@@ -27,16 +31,16 @@ import typer
 from rich.console import Console
 from rich.rule import Rule
 
-from hcli import __app_name__, __version__
-from hcli.arsenal import check_binaries
-from hcli.config import validate_config
-from hcli.state.db import StateDB
-from hcli.utils.scope import load_scope
-from hcli.utils.ui import print_banner
+from ghilliesuite_ex import __app_name__, __version__
+from ghilliesuite_ex.arsenal import check_binaries
+from ghilliesuite_ex.config import validate_config
+from ghilliesuite_ex.state.db import StateDB
+from ghilliesuite_ex.utils.scope import load_scope
+from ghilliesuite_ex.utils.ui import print_banner
 
 app = typer.Typer(
     name=__app_name__,
-    help="[bold cyan]hcli.sec[/bold cyan] — AI Bug Bounty Orchestrator for HackerOne.",
+    help="[bold cyan]GhillieSuite-EX.sec[/bold cyan] — AI Bug Bounty Orchestrator for HackerOne.",
     add_completion=False,
     rich_markup_mode="rich",
     no_args_is_help=True,
@@ -89,6 +93,26 @@ def hunt(
         "--update-templates/--no-update-templates",
         help="Run 'nuclei -ut' on startup to fetch the latest CVE templates.",
     ),
+    cookie: Optional[str] = typer.Option(
+        None,
+        "--cookie", "-c",
+        help=(
+            "Session cookie string injected into all active tools as -H 'Cookie: ...'.\n"
+            "Example: --cookie 'session=abc123; csrf_token=xyz'\n"
+            "Enables authenticated scanning to discover post-login vulnerabilities."
+        ),
+        show_default=False,
+    ),
+    header: Optional[str] = typer.Option(
+        None,
+        "--header",
+        help=(
+            "Custom HTTP header injected into all active tools as -H '...'.\n"
+            "Example: --header 'Authorization: Bearer eyJhbGciOiJSUzI1NiJ9...'\n"
+            "Can be combined with --cookie for full authenticated session support."
+        ),
+        show_default=False,
+    ),
 ) -> None:
     """
     Launch a full AI-driven bug bounty hunt against TARGET.
@@ -96,6 +120,11 @@ def hunt(
     AI provider is auto-detected from your .env:
       OPENAI_API_KEY=sk-...   → OpenAI (gpt-4o-mini)
       GEMINI_API_KEY=AIza...  → Google Gemini (gemini-2.5-pro)
+
+    AUTHENTICATED SCANNING: Use --cookie and/or --header to inject session
+    credentials into httpx, katana, nuclei, dalfox, and sqlmap. This enables
+    discovery of post-authentication vulnerabilities commonly missed by
+    unauthenticated scans.
 
     The Supervisor AI will orchestrate Recon, Exploit, and Reporter agents
     in an intelligent loop, storing all state in a local SQLite database.
@@ -110,6 +139,8 @@ def hunt(
             timeout=timeout,
             safe_mode=safe_mode,
             update_templates=update_templates,
+            cookie=cookie,
+            header=header,
         )
     )
 
@@ -122,12 +153,14 @@ async def _async_hunt(
     timeout: int,
     safe_mode: bool,
     update_templates: bool,
+    cookie: str | None,
+    header: str | None,
 ) -> None:
     """Async implementation of the hunt command."""
-    from hcli.config import cfg, validate_config
-    from hcli.agents.supervisor import SupervisorAgent
-    from hcli.agents.base import AgentTask
-    from hcli.utils.executor import run_tool
+    from ghilliesuite_ex.config import cfg, validate_config
+    from ghilliesuite_ex.agents.supervisor import SupervisorAgent
+    from ghilliesuite_ex.agents.base import AgentTask
+    from ghilliesuite_ex.utils.executor import run_tool
 
     # ── Banner ─────────────────────────────────────────────────────────────
     print_banner(console)
@@ -141,6 +174,27 @@ async def _async_hunt(
 
     _print_provider_log(resolved_provider)
 
+    # ── Store auth credentials in global config ────────────────────────────
+    # These are set here (not in Config.__init__) because they are per-session
+    # CLI values, not environment variables.
+    if cookie:
+        cfg.auth_cookie = cookie.strip()
+    if header:
+        cfg.auth_header = header.strip()
+
+    if cfg.is_authenticated:
+        console.print(
+            "[bold bright_yellow][+] Authenticated mode active[/bold bright_yellow]  "
+            "[dim]— auth credentials will be injected into httpx, katana, nuclei, dalfox, sqlmap[/dim]"
+        )
+        if cfg.auth_cookie:
+            preview = cfg.auth_cookie[:40] + "…" if len(cfg.auth_cookie) > 40 else cfg.auth_cookie
+            console.print(f"    [dim]Cookie : {preview}[/dim]")
+        if cfg.auth_header:
+            preview = cfg.auth_header[:60] + "…" if len(cfg.auth_header) > 60 else cfg.auth_header
+            console.print(f"    [dim]Header : {preview}[/dim]")
+        console.print()
+
     # ── Scope loading ──────────────────────────────────────────────────────
     try:
         scope_domains = load_scope(scope_input)
@@ -151,7 +205,7 @@ async def _async_hunt(
     console.print(f"[green]✔[/green] Scope loaded: {', '.join(scope_domains)}")
 
     # Validate target is in scope
-    from hcli.utils.scope import is_in_scope
+    from ghilliesuite_ex.utils.scope import is_in_scope
     if not is_in_scope(target, scope_domains):
         console.print(
             f"[bold red]❌ Target '{target}' is NOT in the provided scope![/bold red]\n"
@@ -195,7 +249,7 @@ async def _async_hunt(
             safe_mode=safe_mode,
             max_loops=max_loops,
         )
-        from hcli.agents.base import AgentTask
+        from ghilliesuite_ex.agents.base import AgentTask
         task = AgentTask(target=target, safe_mode=safe_mode)
         result = await supervisor.run(task)
 
@@ -231,7 +285,7 @@ def _print_provider_log(provider: str) -> None:
     """
     Print the styled '[+] Auto-detected AI Provider: ...' startup message.
     """
-    from hcli.config import cfg
+    from ghilliesuite_ex.config import cfg
     provider_styles = {
         "openai": ("bright_green", "🤖 OpenAI", cfg.openai_model),
         "gemini": ("bright_cyan",  "✨ Google Gemini", cfg.gemini_model),
@@ -275,7 +329,7 @@ def check_config() -> None:
     print_banner(console)
     try:
         resolved = validate_config()   # auto-detect
-        from hcli.config import cfg
+        from ghilliesuite_ex.config import cfg
         _print_provider_log(resolved)
         console.print(f"[green]✔ Configuration valid.[/green]  Provider: [bold]{cfg.provider_display}[/bold]\n")
     except RuntimeError as exc:
@@ -289,7 +343,7 @@ def check_config() -> None:
 
 @app.command()
 def version() -> None:
-    """Show the hcli.sec version."""
+    """Show the GhillieSuite-EX version."""
     console.print(f"[cyan]{__app_name__}[/cyan] v[bold]{__version__}[/bold]")
 
 
