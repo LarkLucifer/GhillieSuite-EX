@@ -1,7 +1,7 @@
 # GhillieSuite-EX — Advanced AI Pentesting Framework
 
 > **AI-automated penetration testing CLI for HackerOne bug bounty hunters.**  
-> Multi-agent · File I/O pipeline · Authenticated scanning · 2026 attack vectors · HitL safety
+> Multi-agent · File I/O pipeline · Authenticated scanning · HTML Reporting · Anti-False Positives
 
 ---
 
@@ -13,7 +13,7 @@ SupervisorAgent (AI decision loop)
 │                      gau (parallel) · katana (crawl)
 ├── ExploitAgent     → nuclei · dalfox [HitL] · sqlmap [HitL]
 │                      ffuf [HitL] · BOLA/IDOR advisor · AI Prompt Injection advisor
-└── ReporterAgent    → JSON + Markdown findings report
+└── ReporterAgent    → HTML (Tailwind CSS) + JSON findings report
 
 StateDB (SQLite via aiosqlite)
 ├── hosts      (domain, status, tech_stack, tags)
@@ -94,6 +94,7 @@ Options:
   --max-loops           Max agent decision loops              [default: 15]
   --timeout             Per-tool timeout (seconds)            [default: 180]
   --safe-mode           HitL on ALL tools                     [flag]
+  --force-auto          Bypass ALL HitL prompts (CI/CD mode)  [flag]
   --no-update-templates Skip nuclei -ut on startup            [flag]
   --cookie / -c         Session cookie string (authenticated scanning)
   --header              Custom HTTP header (e.g. Authorization: Bearer ...)
@@ -116,14 +117,17 @@ GhillieSuite-EX.sec version       Show version
 | CVE / misconfiguration scan | nuclei | Critical only |
 | XSS exploitation | dalfox | ✅ Always |
 | SQL injection | sqlmap | ✅ Always |
-| **Directory brute-force** | **ffuf** | **✅ Always** |
-| **SSRF parameter fuzzing** | **ffuf** | **✅ Always** |
-| **BOLA / IDOR detection** | passive advisor | — |
-| **AI/LLM Prompt Injection** | passive advisor | — |
+| **Directory brute-force** | **ffuf** | — (Auto) |
+| **SSRF parameter fuzzing** | **ffuf** | **✅ Always** (unless `--force-auto`) |
+| **BOLA / IDOR detection** | Active Differential Analysis | — |
+| **AI/LLM Prompt Injection** | Passive advisor | — |
 | Secret scanning | trufflehog | — |
 
-### BOLA/IDOR Detection
-The ExploitAgent scans all stored endpoints for integer (`/user/123`) and UUID path segments. Matching endpoints generate a **medium** severity advisory with cross-account testing instructions.
+### False Positive Suppression & HTTP Validation
+All discovered findings pass through an `httpx` validation layer. 404 endpoints are downgraded to `info` (`[Historical/Inactive]`), and pages returning 200 OK with "Access Denied" or "Login Required" text in the body are flagged as `[False Positive / Fake 200]` to save triage time.
+
+### BOLA/IDOR Detection (Differential Analysis)
+The ExploitAgent scans endpoints for integer (`/user/123`) and UUID segments. When an integer ID is found, it performs active **Differential Analysis** using `httpx` to fuzz `id+1` and `id-1`. If the HTTP response length changes significantly, the finding is automatically elevated to a **HIGH CONFIDENCE** status.
 
 ### SSRF Parameter Fuzzing
 Endpoints with SSRF-prone parameters (`url`, `path`, `redirect`, `next`, `dest`, `callback`, `proxy`, etc.) are automatically flagged. A **high** severity advisory is stored with cloud metadata endpoint payloads (AWS IMDS, GCP metadata, internal port scan).
@@ -182,8 +186,8 @@ If both are set, **OpenAI takes priority**.
 ## Safety & Ethics
 
 - **Scope is mandatory.** `--scope` is required and enforced at every layer — out-of-scope URLs are silently dropped.
-- **HitL by default for all active exploits.** `dalfox`, `sqlmap`, and `ffuf` always require `[Y/n]` human confirmation before firing.
-- **Passive advisories send zero traffic.** BOLA/IDOR and AI Prompt Injection advisories are analysis-only — no requests are made.
+- **HitL by default for all active exploits.** `dalfox`, `sqlmap`, and `ffuf` SSRF testing always require `[Y/n]` human confirmation before firing. This can be completely bypassed by using the `--force-auto` CLI flag for headless CI/CD execution.
+- **Passive and Active validation.** AI capabilities actively validate target endpoints natively using Python's `httpx` library, ensuring noise and false positives are aggressively reduced.
 - **Auth credentials are session-only.** `--cookie` / `--header` values are never written to disk or `.env`.
 - **You are responsible** for HackerOne program compliance and legal authorization.
 
@@ -193,8 +197,8 @@ If both are set, **OpenAI takes priority**.
 
 Saved to `reports/` after each hunt:
 
-- `<target>_<timestamp>.json` — machine-readable, all findings, hosts, endpoints
-- `<target>_<timestamp>.md` — human-readable, severity-grouped (Critical → Low) with reproducible steps
+- `<target>_<timestamp>.html` — polished, automated Tailwind CSS dashboard with AI-generated plain-English translations.
+- `<target>_<timestamp>.json` — machine-readable, all findings, hosts, endpoints.
 
 ---
 
