@@ -113,6 +113,20 @@ def hunt(
         ),
         show_default=False,
     ),
+<<<<<<< HEAD
+=======
+    force_auto: bool = typer.Option(
+        False,
+        "--force-auto",
+        help=(
+            "Bypass ALL Human-in-the-Loop prompts and run fully automatically. "
+            "\n[bold red]WARNING:[/bold red] Only use on targets you are explicitly authorised to test. "
+            "\nIdeal for CI/CD pipelines and scheduled automated scans."
+        ),
+        is_flag=True,
+        rich_help_panel="Automation",
+    ),
+>>>>>>> 2133cbc (update)
 ) -> None:
     """
     Launch a full AI-driven bug bounty hunt against TARGET.
@@ -141,6 +155,10 @@ def hunt(
             update_templates=update_templates,
             cookie=cookie,
             header=header,
+<<<<<<< HEAD
+=======
+            force_auto=force_auto,
+>>>>>>> 2133cbc (update)
         )
     )
 
@@ -155,6 +173,10 @@ async def _async_hunt(
     update_templates: bool,
     cookie: str | None,
     header: str | None,
+<<<<<<< HEAD
+=======
+    force_auto: bool = False,
+>>>>>>> 2133cbc (update)
 ) -> None:
     """Async implementation of the hunt command."""
     from ghilliesuite_ex.config import cfg, validate_config
@@ -195,6 +217,19 @@ async def _async_hunt(
             console.print(f"    [dim]Header : {preview}[/dim]")
         console.print()
 
+<<<<<<< HEAD
+=======
+    # ── Force-auto mode ────────────────────────────────────────────────────
+    if force_auto:
+        cfg.force_auto = True
+        console.print(
+            "[bold red]⚠️  FORCE-AUTO MODE ACTIVE — All HitL prompts bypassed.[/bold red]\n"
+            "[dim]   dalfox, sqlmap, and ffuf SSRF will fire without confirmation.\n"
+            "   Only use on targets you are explicitly, legally authorised to test.[/dim]"
+        )
+        console.print()
+
+>>>>>>> 2133cbc (update)
     # ── Scope loading ──────────────────────────────────────────────────────
     try:
         scope_domains = load_scope(scope_input)
