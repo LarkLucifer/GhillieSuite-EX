@@ -113,8 +113,6 @@ def hunt(
         ),
         show_default=False,
     ),
-<<<<<<< HEAD
-=======
     force_auto: bool = typer.Option(
         False,
         "--force-auto",
@@ -126,7 +124,6 @@ def hunt(
         is_flag=True,
         rich_help_panel="Automation",
     ),
->>>>>>> 2133cbc (update)
 ) -> None:
     """
     Launch a full AI-driven bug bounty hunt against TARGET.
@@ -155,10 +152,7 @@ def hunt(
             update_templates=update_templates,
             cookie=cookie,
             header=header,
-<<<<<<< HEAD
-=======
             force_auto=force_auto,
->>>>>>> 2133cbc (update)
         )
     )
 
@@ -173,10 +167,7 @@ async def _async_hunt(
     update_templates: bool,
     cookie: str | None,
     header: str | None,
-<<<<<<< HEAD
-=======
     force_auto: bool = False,
->>>>>>> 2133cbc (update)
 ) -> None:
     """Async implementation of the hunt command."""
     from ghilliesuite_ex.config import cfg, validate_config
@@ -217,8 +208,6 @@ async def _async_hunt(
             console.print(f"    [dim]Header : {preview}[/dim]")
         console.print()
 
-<<<<<<< HEAD
-=======
     # ── Force-auto mode ────────────────────────────────────────────────────
     if force_auto:
         cfg.force_auto = True
@@ -229,7 +218,6 @@ async def _async_hunt(
         )
         console.print()
 
->>>>>>> 2133cbc (update)
     # ── Scope loading ──────────────────────────────────────────────────────
     try:
         scope_domains = load_scope(scope_input)
@@ -288,8 +276,22 @@ async def _async_hunt(
         task = AgentTask(target=target, safe_mode=safe_mode)
         result = await supervisor.run(task)
 
+        # ── Report Generation ─────────────────────────────────────────────
+        console.print()
+        console.print(Rule("[bold]Generating HTML Report[/bold]", style="bright_blue"))
+        from ghilliesuite_ex.utils.reporter import HtmlReporter
+        reporter = HtmlReporter(db=db, ai_client=ai_client, console=console, config=cfg)
+        
+        from rich.status import Status
+        with Status("[blue]Consulting AI for plain-English summaries and rendering HTML report…[/blue]", console=console):
+            report_path = await reporter.generate(
+                target=target,
+                scope=scope_domains,
+                output_dir=output_dir,
+            )
+
     console.print(f"\n[bold bright_green]Hunt complete! {result.summary}[/bold bright_green]")
-    console.print(f"Reports saved in: [underline]{Path(output_dir).resolve()}[/underline]\n")
+    console.print(f"Report saved at: [bold underline cyan]file://{report_path.resolve()}[/bold underline cyan]\n")
 
 
 def _build_ai_client(config):
