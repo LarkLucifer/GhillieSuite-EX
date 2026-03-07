@@ -73,7 +73,7 @@ def hunt(
         help="Directory where JSON + Markdown reports are saved.",
     ),
     max_loops: int = typer.Option(
-        15,
+        5,
         "--max-loops",
         help="Maximum number of agent decision loops.",
     ),
