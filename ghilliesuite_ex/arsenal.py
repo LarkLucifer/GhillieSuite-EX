@@ -205,11 +205,19 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         scope_flag=None,
         category="Exploitation",
         parser="ffuf",
+<<<<<<< HEAD
         hitl_required=True,
         uses_output_file=True,
         description=(
             "Fast web fuzzer — hidden directory brute-force and SSRF parameter testing "
             "(e.g. ?url=, ?path=, ?redirect=). ⚠️ [HitL required]"
+=======
+        hitl_required=False,  # Directory brute-force is non-destructive; SSRF payloads use force_auto
+        uses_output_file=True,
+        description=(
+            "Fast web fuzzer — hidden directory brute-force and SSRF parameter testing "
+            "(?url=, ?path=, ?redirect=). Active SSRF payloads still gated by force_auto."
+>>>>>>> 2133cbc (update)
         ),
     ),
 

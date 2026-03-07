@@ -136,6 +136,17 @@ class Config:
         """True when any auth credential has been configured."""
         return bool(self.auth_cookie or self.auth_header)
 
+<<<<<<< HEAD
+=======
+    # ── Automation — set at runtime by the CLI --force-auto flag
+    force_auto: bool = False
+    """
+    If True, all hitl_prompt() calls are silently approved.
+    USE WITH EXTREME CAUTION — only on pre-authorised targets.
+    Ideal for CI/CD pipelines and scheduled automated scans.
+    """
+
+>>>>>>> 2133cbc (update)
     def __post_init__(self) -> None:
         """Run auto-detection immediately after the dataclass is initialised."""
         self.ai_provider, self.active_api_key = detect_ai_provider()

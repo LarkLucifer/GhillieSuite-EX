@@ -4,10 +4,20 @@ ghilliesuite_ex/agents/reporter.py
 ReporterAgent — queries the SQLite DB and writes structured reports.
 
 Outputs:
+<<<<<<< HEAD
   • JSON report  — reports/<target>_<timestamp>.json
   • Markdown report — reports/<target>_<timestamp>.md
     Structured: Critical → High → Medium → Low → Info
     Includes: reproducible steps, evidence, raw output snippets.
+=======
+  • JSON report    — reports/<target>_<timestamp>.json
+  • Markdown report — reports/<target>_<timestamp>.md
+    Structured: Critical → High → Medium → Low → Info
+    Includes: reproducible steps, evidence, raw output snippets.
+  • HTML report    — reports/<target>_<timestamp>.html
+    Tailwind CSS dark theme, AI plain-English summaries per finding,
+    collapsible technical sections, BOLA/IDOR & AI advisory section.
+>>>>>>> 2133cbc (update)
   • Rich terminal table — displayed to console immediately.
 """
 
@@ -163,6 +173,28 @@ class ReporterAgent(BaseAgent):
         self.console.print(Rule("[bold bright_green]✔  Report saved[/bold bright_green]", style="bright_green"))
         self.console.print(f"  JSON: [underline]{json_path.resolve()}[/underline]")
         self.console.print(f"  MD:   [underline]{md_path.resolve()}[/underline]")
+<<<<<<< HEAD
+=======
+
+        # ── HTML Report ────────────────────────────────────────────────────
+        try:
+            from ghilliesuite_ex.utils.reporter import HtmlReporter
+            html_reporter = HtmlReporter(
+                db=self.db,
+                ai_client=self.ai,
+                console=self.console,
+                config=self.cfg,
+            )
+            html_path = await html_reporter.generate(
+                target=target,
+                scope=self.scope,
+                output_dir=output_dir,
+            )
+            self.console.print(f"  HTML: [underline]{html_path.resolve()}[/underline]")
+        except Exception as exc:
+            self.console.print(f"[yellow]  ⚠ HTML report failed (continuing): {exc}[/yellow]")
+
+>>>>>>> 2133cbc (update)
         self.console.print()
 
         return AgentResult(
