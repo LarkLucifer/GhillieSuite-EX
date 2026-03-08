@@ -197,7 +197,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         binary="dalfox",
         base_cmd=[
             "dalfox", "file", "{target}", 
-            "--silence", "--format", "json", "-w", "50",
+            "--silence", "--format", "json", "-o", "{output_file}", "-w", "50",
             "--skip-bav", "--skip-mining-dom", "--skip-mining-dict"
         ],
         scope_flag=None,
