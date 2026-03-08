@@ -293,7 +293,7 @@ async def _async_hunt(
 
     # Ensure the DB directory exists (for the hardcoded ~/GhillieSuite-EX/ path)
     import os as _os
-    _db_dir = _os.path.dirname(cfg.db_path)
+    _db_dir = _os.path.dirname(_os.path.abspath(cfg.db_path))
     if _db_dir:
         _os.makedirs(_db_dir, exist_ok=True)
 

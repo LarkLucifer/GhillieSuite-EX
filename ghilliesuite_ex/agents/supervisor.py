@@ -92,114 +92,42 @@ class SupervisorAgent(BaseAgent):
         self.reporter_agent = ReporterAgent(db, ai_client, scope, console, config)
 
     async def run(self, task: AgentTask) -> AgentResult:
-        """Drive the full hunt loop for task.target."""
+        """Drive the strict sequential pipeline for task.target."""
         target = task.target
         self.console.print(
-            Rule(f"[bold bright_magenta]🕵  Hunt started — target: {target}[/bold bright_magenta]",
+            Rule(f"[bold bright_magenta]🕵  Hunt started (Strict Pipeline) — target: {target}[/bold bright_magenta]",
                  style="bright_magenta")
         )
 
         total_findings = 0
+        self.console.print("[cyan]Enforcing strict pipeline: Recon -> VulnScan -> Deep Exploitation[/cyan]")
 
-        for loop in range(1, self.max_loops + 1):
-            # ── Get compact DB summary for AI ──────────────────────────────
-            db_summary = await self.db.get_summary_for_ai()
+        # 1. Recon Phase
+        agent_panel(self.console, "ReconAgent", "subfinder, gau, httpx, katana", target, 1, 3)
+        res_recon = await self.recon_agent.run(AgentTask(target=target, safe_mode=self.safe_mode))
+        total_findings += res_recon.items_added if res_recon.status == "ok" else 0
+        self.console.print(f"[dim]  → ReconAgent: {res_recon.summary}[/dim]")
 
-            # ── Ask Supervisor AI what to do next ──────────────────────────
-            decision = await self._decide(db_summary, target)
+        # 2. Exploit Phase
+        agent_panel(self.console, "ExploitAgent", "nuclei, dalfox, sqlmap, ffuf", target, 2, 3)
+        res_exploit = await self.exploit_agent.run(AgentTask(target=target, safe_mode=self.safe_mode))
+        total_findings += res_exploit.items_added if res_exploit.status == "ok" else 0
+        self.console.print(f"[dim]  → ExploitAgent: {res_exploit.summary}[/dim]")
 
-            if decision is None:
-                self.console.print("[yellow]⚠  AI returned an unparseable decision. Stopping.[/yellow]")
-                break
-
-            phase = decision.get("phase", "done")
-            agent_name = decision.get("agent", "ReporterAgent")
-            tool = decision.get("tool")
-            sub_target = decision.get("target", target)
-            reason = decision.get("reason", "")
-            cve_keyword = decision.get("cve_keyword")
-
-            # ── Display current agent action ────────────────────────────────
-            agent_panel(self.console, agent_name, tool or phase, sub_target, loop, self.max_loops)
-
-            # ── Handle fetch_cve phase ──────────────────────────────────────
-            if phase == "fetch_cve" and cve_keyword:
-                await self._handle_fetch_cve(cve_keyword)
-                continue
-
-            # ── Terminal condition ──────────────────────────────────────────
-            if phase == "done":
-                self.console.print("[bright_green]✔  AI has decided the hunt is complete.[/bright_green]")
-                break
-
-            # ── Dispatch to sub-agent ───────────────────────────────────────
-            sub_task = AgentTask(
-                target=sub_target,
-                tool_name=tool,
-                reason=reason,
-                safe_mode=self.safe_mode,
-            )
-
-            result = await self._dispatch(phase, sub_task)
-            total_findings += result.items_added if result.status == "ok" else 0
-
-            self.console.print(
-                f"[dim]  → {result.agent}: {result.summary}[/dim]"
-            )
-
-            # ── Live dashboard after each agent turn ────────────────────────
-            hosts = await self.db.get_hosts()
-            endpoints = await self.db.get_endpoints()
-            findings = await self.db.get_findings()
-            eps_with_params = sum(1 for e in endpoints if e.params)
-
-            status_dashboard(
-                self.console,
-                hosts=len(hosts),
-                endpoints=len(endpoints),
-                findings=len(findings),
-                endpoints_with_params=eps_with_params,
-            )
-
-        # ── Always run reporter at the end ──────────────────────────────────
+        # 3. Report Phase
         self.console.print(Rule("[bold bright_green]📋  Compiling Report[/bold bright_green]", style="bright_green"))
         await self.reporter_agent.run(AgentTask(target=target))
 
         return AgentResult(
             agent=self.name,
             status="ok",
-            summary=f"Hunt complete. {total_findings} finding(s) stored.",
+            summary=f"Sequential pipeline complete. {total_findings} finding(s) stored.",
             items_added=total_findings,
         )
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
-    async def _decide(self, db_summary: str, target: str) -> dict | None:
-        """
-        Ask the AI for the next action. Returns a parsed dict or None on failure.
-        The prompt deliberately sends ONLY the compact DB summary (tokens-safe).
-        """
-        prompt = (
-            f"Target: {target}\n"
-            f"In-scope domains: {', '.join(self.scope)}\n\n"
-            f"Current state:\n{db_summary}"
-        )
-        raw = await self._ask_ai(prompt, system=SUPERVISOR_SYSTEM_PROMPT)
-
-        if not raw:
-            return None
-
-        # Extract JSON even if the AI wrapped it in markdown fences
-        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not json_match:
-            self.console.print(f"[dim red]AI response was not JSON:\n{raw[:300]}[/dim red]")
-            return None
-
-        try:
-            return json.loads(json_match.group(0))
-        except json.JSONDecodeError as exc:
-            self.console.print(f"[dim red]JSON parse error: {exc}[/dim red]")
-            return None
+    # Helper properties deleted to reduce bloat
 
     async def _dispatch(self, phase: str, task: AgentTask) -> AgentResult:
         """Route a phase string to the correct sub-agent."""

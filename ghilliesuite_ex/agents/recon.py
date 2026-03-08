@@ -186,6 +186,18 @@ class ReconAgent(BaseAgent):
                     ep = Endpoint(url=item["url"], source_tool="httpx", host_id=host_id)
                     await self.db.insert_endpoint(ep)
 
+        # ── Fallback for 0-Hosts (WAF Block Mitigation) ───────────────────
+        if live_count == 0 and subdomains:
+            self.console.print("[yellow]  ⚠ httpx returned 0 live hosts. WAF block suspected. Safely falling back to subfinder domains...[/yellow]")
+            for domain in subdomains:
+                await self.db._db.execute("UPDATE hosts SET status_code = 200, tech_stack = 'WAF-Fallback' WHERE domain = ?", (domain,))
+                await self.db._db.commit()
+                row = await (await self.db._db.execute("SELECT id FROM hosts WHERE domain = ?", (domain,))).fetchone()
+                if row:
+                    ep = Endpoint(url=f"https://{domain}", source_tool="fallback", host_id=row["id"])
+                    await self.db.insert_endpoint(ep)
+                live_count += 1
+
         tool_result_panel(
             self.console, "httpx", httpx_cmd,
             httpx_result.ok or bool(httpx_result.output_file),
