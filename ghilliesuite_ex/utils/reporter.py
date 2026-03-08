@@ -96,25 +96,6 @@ class HtmlReporter:
         self.console.print(f"[cyan]  Generating AI summaries for {len(findings)} finding(s)…[/cyan]")
         enriched = await self._enrich_findings(findings, hosts)
 
-        # ── Capture Visual Evidence ───────────────────────────────────────────────
-        screenshot_base64 = ""
-        self.console.print(f"[cyan]  Capturing Visual Evidence for {target}…[/cyan]")
-        try:
-            from playwright.async_api import async_playwright
-            import base64
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
-                target_url = target if target.startswith("http") else f"https://{target}"
-                await page.goto(target_url, wait_until="networkidle", timeout=15000)
-                screenshot_bytes = await page.screenshot(type="jpeg", quality=60)
-                screenshot_base64 = base64.b64encode(screenshot_bytes).decode("utf-8")
-                await browser.close()
-        except ImportError:
-            self.console.print("[dim]  playwright not available, skipping screenshot.[/dim]")
-        except Exception as e:
-            self.console.print(f"[yellow]  ⚠ Screenshot failed: {e}[/yellow]")
-
         html_content = _render_html(
             target=target,
             scope=scope,
@@ -122,7 +103,6 @@ class HtmlReporter:
             findings=enriched,
             hosts=hosts,
             endpoints=endpoints,
-            screenshot_base64=screenshot_base64,
         )
 
         html_path.write_text(html_content, encoding="utf-8")
@@ -254,7 +234,6 @@ def _render_html(
     findings: list[dict[str, Any]],
     hosts: list[Host],
     endpoints: list[Endpoint],
-    screenshot_base64: str = "",
 ) -> str:
     # Filter out inactive hosts and their endpoints
     active_hosts = [h for h in hosts if 200 <= getattr(h, "status_code", 0) < 400]
@@ -314,7 +293,6 @@ def _render_html(
       <div class="text-right text-xs text-gray-500">
         <p>Generated: {_e(generated_at)}</p>
         <p>Scope: {_e(', '.join(scope))}</p>
-        {f'<img src="data:image/jpeg;base64,{screenshot_base64}" class="mt-3 rounded border border-gray-700 w-48 shadow-lg inline-block" alt="Target Visual Evidence">' if screenshot_base64 else ''}
       </div>
     </div>
   </header>
