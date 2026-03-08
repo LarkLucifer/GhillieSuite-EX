@@ -204,7 +204,7 @@ Best regards,
 
             # Dynamic Severity Promotion
             sev_str = f.severity.lower()
-            if "BOLA/IDOR Detected" in f.title or "GraphQL Introspection Enabled" in f.title:
+            if "BOLA/IDOR Detected" in f.title:
                 sev_str = "critical"
 
             enriched.append({
