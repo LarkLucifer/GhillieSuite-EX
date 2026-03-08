@@ -155,15 +155,12 @@ def hunt(
     )
 
     try:
-        loop = asyncio.get_running_loop()
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(coro)
+        else:
+            loop.run_until_complete(coro)
     except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        # If we are already inside a running event loop (e.g. Jupyter, some IDEs),
-        # create a task instead of asyncio.run
-        loop.create_task(coro)
-    else:
         asyncio.run(coro)
 
 
@@ -296,7 +293,9 @@ async def _async_hunt(
 
     # Ensure the DB directory exists (for the hardcoded ~/GhillieSuite-EX/ path)
     import os as _os
-    _os.makedirs(_os.path.dirname(cfg.db_path), exist_ok=True)
+    _db_dir = _os.path.dirname(cfg.db_path)
+    if _db_dir:
+        _os.makedirs(_db_dir, exist_ok=True)
 
     result_summary = "Pipeline terminated early — see error log above."
     report_path    = None

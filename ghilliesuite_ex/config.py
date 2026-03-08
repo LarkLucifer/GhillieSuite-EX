@@ -94,9 +94,8 @@ class Config:
     # Hardcoded to a stable home-directory path so the DB is always found
     # regardless of CWD, enabling 100% reliable 4-day unattended runs.
     db_path: str = field(
-        default_factory=lambda: os.getenv(
-            "DB_PATH",
-            os.path.expanduser("~/GhillieSuite-EX/ghilliesuite_state.db")
+        default_factory=lambda: os.path.abspath(
+            os.getenv("DB_PATH", os.path.expanduser("~/GhillieSuite-EX/ghilliesuite_state.db"))
         )
     )
 
