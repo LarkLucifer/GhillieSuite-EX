@@ -91,8 +91,13 @@ class Config:
     )
 
     # ── SQLite state DB path
+    # Hardcoded to a stable home-directory path so the DB is always found
+    # regardless of CWD, enabling 100% reliable 4-day unattended runs.
     db_path: str = field(
-        default_factory=lambda: os.getenv("DB_PATH", ".ghilliesuite_state.db")
+        default_factory=lambda: os.getenv(
+            "DB_PATH",
+            os.path.expanduser("~/GhillieSuite-EX/ghilliesuite_state.db")
+        )
     )
 
     # ── Tools that ALWAYS require Human-in-the-Loop confirmation

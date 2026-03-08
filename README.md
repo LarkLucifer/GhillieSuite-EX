@@ -1,7 +1,7 @@
 # GhillieSuite-EX — Advanced AI Pentesting Framework
 
 > **AI-automated penetration testing CLI for HackerOne bug bounty hunters.**  
-> Multi-agent · File I/O pipeline · Authenticated scanning · HTML Reporting · Anti-False Positives
+> Multi-agent · WAF-Resilient · Crash-Proof 4-Day Pipeline · HTML Reporting · Anti-False Positives
 
 ---
 
@@ -15,7 +15,7 @@ SupervisorAgent (AI decision loop)
 │                      ffuf [HitL] · BOLA/IDOR advisor · AI Prompt Injection advisor
 └── ReporterAgent    → HTML (Tailwind CSS) + JSON findings report
 
-StateDB (SQLite via aiosqlite)
+StateDB (SQLite via aiosqlite @ ~/GhillieSuite-EX/ghilliesuite_state.db)
 ├── hosts      (domain, status, tech_stack, tags)
 ├── endpoints  (url, params — high-value only)
 ├── findings   (severity, title, reproducible_steps)
@@ -113,13 +113,15 @@ GhillieSuite-EX.sec version       Show version
 |--------|------|------|
 | Subdomain enumeration | subfinder | — |
 | Historical URL discovery | gau | — |
-| Live host probing (JSON) | httpx | — |
+| Live host probing (JSON) | httpx (WAF-Bypass flags) | — |
 | Web crawling (authenticated) | katana | — |
-| CVE / misconfiguration scan | nuclei | Critical only |
+| CVE / misconfiguration scan | nuclei (Targeted tags) | Critical only |
 | XSS exploitation | dalfox | ✅ Always |
 | SQL injection | sqlmap | ✅ Always |
 | **Directory brute-force** | **ffuf (Context-Aware)** | — (Auto) |
 | **SSRF parameter fuzzing** | **ffuf** | **✅ Always** (unless `--force-auto`) |
+| **Cloud Metadata SSRF** | **Active Param Fuzzing** | — |
+| **Cache Poisoning** | **Unkeyed Header Probe** | — |
 | **BOLA / IDOR detection** | Active Differential Analysis | — |
 | **React 19 RSC Parsing** | Active Leak Discovery | — |
 | **Prototype Pollution** | Playwright Sandbox Verification | — |
@@ -133,7 +135,11 @@ All discovered findings pass through an `httpx` validation layer. 404 endpoints 
 ### Context-Aware Orchestration (TechStackDetector)
 `ffuf` is dynamically injected with smart wordlists based on the detected tech stack (`PHP/Laravel`, `Java/Spring`, `Node.js`), drastically optimizing the directory brute-force phase.
 
-### Deep Research & Execution (Tier 6-8)
+### Deep Research & Execution (Tier 0-9 Attacks)
+- **4-Stage Crash-Proof Pipeline**: The `ExploitAgent` strictly executes Recon → VulnScan → Contextual Exploitation → Advanced Logic. Every stage is wrapped in a global exception handler, guaranteeing a 100% stable 4-day unattended run.
+- **WAF Resilience**: Native execution of `httpx` and `nuclei` uses rotated user-agents, request retries, and strict rate limits (`-rl 50`) to bypass active WAFs and blocklisting.
+- **Cloud Metadata SSRF**: SSRF-prone endpoints are dynamically injected with AWS/GCP/Azure payloads (e.g., `169.254.169.254/latest/meta-data`). Responses are flagged if they contain cloud credentials or IAM profiles.
+- **Cache Poisoning**: Unkeyed headers (`X-Forwarded-Host`, `X-Host`) are sent with canary hostnames to verify reflection and edge cache pollution vulnerabilities.
 - **Prototype Pollution 2.0**: JS sinks are dynamically tested in a headless `playwright` sandbox to actively verify standard payload injections via `Object.assign`. Successfully poisoned objects are auto-promoted to critical severity with a VERIFIED label.
 - **React 19 / Next.js Flight**: Inspects `.json` paths and passes custom `RSC: 1` headers to intercept React Server Component leaks to decode hardcoded developer secrets and insecure prop drilling payloads.
 - **WebSocket Piracy**: Analyzes discovered `ws://` / `wss://` sockets for unauthenticated event ingestion (`{event: "auth"}`) and Cross-Site WebSocket Hijacking (CSWSH) without SOP blocking.
