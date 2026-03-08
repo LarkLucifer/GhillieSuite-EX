@@ -107,7 +107,74 @@ class HtmlReporter:
 
         html_path.write_text(html_content, encoding="utf-8")
         self.console.print(f"  HTML: [underline]{html_path.resolve()}[/underline]")
+        
+        self._generate_bounty_draft(target, safe_target, enriched, output_path)
+
         return html_path
+
+    def _generate_bounty_draft(
+        self,
+        target: str,
+        safe_target: str,
+        enriched: list[dict[str, Any]],
+        output_path: Path,
+    ) -> None:
+        """
+        Generates a plain text Responsible Disclosure draft for high/critical findings.
+        """
+        high_critical = [f for f in enriched if f.get("severity", "").lower() in ("high", "critical")]
+        if not high_critical:
+            return
+
+        draft_path = output_path / f"{safe_target}_bounty_draft.txt"
+        lines = []
+
+        for f in high_critical:
+            sev = str(f.get("severity", "")).capitalize()
+            title = f.get("title", "")
+            target_url = f.get("target", "")
+            tool = f.get("tool", "")
+            impact = f.get("impact", "")
+            remediation = f.get("remediation", "")
+            
+            # Extract evidence, prioritising the raw HTTP request/response
+            evidence = f.get("raw_output", "").strip() or f.get("evidence", "").strip() or f.get("reproducible_steps", "").strip() or "N/A"
+            if len(evidence) > 3000:
+                evidence = evidence[:3000] + "\n\n...[TRUNCATED FOR BRIEFITY]..."
+
+            draft = f"""Subject: Security Vulnerability Report - {title} on {target}
+
+Hello Security Team,
+
+My name is [Your Name/Handle], an independent security researcher. During a routine security assessment, I discovered a {sev} severity vulnerability on your infrastructure. I am practicing Responsible Disclosure and keeping this confidential.
+
+VULNERABILITY DETAILS:
+- Bug Type: {tool}
+- Vulnerable URL: {target_url}
+
+PROOF OF CONCEPT (EVIDENCE):
+{evidence}
+
+BUSINESS IMPACT:
+{impact}
+
+REMEDIATION:
+{remediation}
+
+Please let me know if you require further details to validate this issue.
+
+Best regards,
+[Your Handle]
+"""
+            lines.append(draft)
+
+        try:
+            draft_content = "\n" + ("=" * 80) + "\n\n".join(lines)
+            draft_path.write_text(draft_content.strip(), encoding="utf-8")
+            self.console.print(f"  Draft: [underline]{draft_path.resolve()}[/underline]")
+        except Exception as e:
+            self.console.print(f"[yellow]  ⚠ Failed to write bounty draft: {e}[/yellow]")
+
 
     # ── AI enrichment ─────────────────────────────────────────────────────────
 
