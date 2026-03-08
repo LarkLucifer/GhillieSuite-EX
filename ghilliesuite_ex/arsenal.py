@@ -136,7 +136,10 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "httpx",
             "-l", "{input_file}",
             "-silent", "-status-code", "-title", "-tech-detect",
-            "-follow-redirects", "-threads", "50",
+            "-follow-redirects",
+            "-random-agent",       # WAF bypass: rotate User-Agent per request
+            "-retries", "2",       # retry failed probes instead of silently dropping
+            "-rl", "50",           # rate-limit to 50 req/s — avoids 429/WAF blocks
             "-json", "-o", "{output_file}",
         ],
         # httpx reads from -l file; scope enforced by feeding only in-scope hosts
@@ -146,7 +149,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         hitl_required=False,
         uses_output_file=True,
         uses_input_file=True,
-        description="HTTP probe — resolves hosts, detects status, server, tech stack, and page title. JSON file output.",
+        description="HTTP probe — resolves hosts, detects status, server, tech stack, and page title. WAF-resilient: random-agent + retries + rate limit. JSON file output.",
     ),
 
     "katana": ToolSpec(
@@ -174,15 +177,18 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "nuclei": ToolSpec(
         binary="nuclei",
         base_cmd=[
-            "nuclei", "-u", "{target}", "-silent",
+            "nuclei", "-u", "{target}",
+            "-tags", "cve,ssrf,lfi,misconfig,exposure,graphql",  # targeted high-signal templates only
             "-severity", "medium,high,critical",
-            "-stats", "-json",
+            "-rl", "50",    # rate-limit to 50 req/s — avoids WAF/IDS triggers
+            "-c", "20",     # concurrency: 20 parallel template checks
+            "-silent", "-json",
         ],
         scope_flag="-u {target}",
         category="VulnScan",
         parser="nuclei",
         hitl_required=False,  # HitL only for critical findings — handled in ExploitAgent
-        description="Template-based vulnerability scanner; covers CVEs, misconfigs, exposures.",
+        description="Template-based vulnerability scanner; targeted to CVE/SSRF/LFI/misconfig/graphql tags. Rate-limited for stealth.",
     ),
 
     # ── Active Exploitation (HitL required) ───────────────────────────────────
