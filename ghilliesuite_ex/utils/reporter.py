@@ -121,55 +121,58 @@ class HtmlReporter:
     ) -> None:
         """
         Generates a plain text Responsible Disclosure draft for high/critical findings.
+        Consolidates all findings into a single email to prevent noise.
         """
         high_critical = [f for f in enriched if f.get("severity", "").lower() in ("high", "critical")]
         if not high_critical:
             return
 
         draft_path = output_path / f"{safe_target}_bounty_draft.txt"
-        lines = []
+        
+        # Count Severities
+        crit_count = sum(1 for f in high_critical if f.get("severity", "").lower() == "critical")
+        high_count = sum(1 for f in high_critical if f.get("severity", "").lower() == "high")
 
-        for f in high_critical:
-            sev = str(f.get("severity", "")).capitalize()
+        email_draft = [
+            f"Subject: Multiple Security Vulnerabilities Report - {target}\n",
+            "Hello Security Team,\n",
+            "My name is [Your Name/Handle], an independent security researcher. During a routine security assessment on your infrastructure, I discovered multiple security vulnerabilities that require your attention. I am practicing Responsible Disclosure and keeping this confidential.\n",
+            "--- FINDINGS SUMMARY ---",
+            f"Total Critical Findings: {crit_count}",
+            f"Total High Findings: {high_count}\n",
+            "--- DETAILED FINDINGS ---\n"
+        ]
+
+        for i, f in enumerate(high_critical, start=1):
+            sev = str(f.get("severity", "").upper())
             title = f.get("title", "")
             target_url = f.get("target", "")
-            tool = f.get("tool", "")
             impact = f.get("impact", "")
             remediation = f.get("remediation", "")
             
-            # Extract evidence, prioritising the raw HTTP request/response
+            # Extract and strictly truncate evidence to prevent WAF HTML noise
             evidence = f.get("raw_output", "").strip() or f.get("evidence", "").strip() or f.get("reproducible_steps", "").strip() or "N/A"
-            if len(evidence) > 3000:
-                evidence = evidence[:3000] + "\n\n...[TRUNCATED FOR BRIEFITY]..."
+            if len(evidence) > 300:
+                evidence = evidence[:300].strip() + "\n... [TRUNCATED]"
 
-            draft = f"""Subject: Security Vulnerability Report - {title} on {target}
+            finding_block = (
+                f"[{i}] Severity: {sev} - {title}\n"
+                f"- Vulnerable URL: {target_url}\n"
+                "- Evidence / Snippet:\n"
+                f"{evidence}\n"
+                f"- Impact: {impact}\n"
+                f"- Remediation: {remediation}\n"
+            )
+            email_draft.append(finding_block)
 
-Hello Security Team,
-
-My name is [Your Name/Handle], an independent security researcher. During a routine security assessment, I discovered a {sev} severity vulnerability on your infrastructure. I am practicing Responsible Disclosure and keeping this confidential.
-
-VULNERABILITY DETAILS:
-- Bug Type: {tool}
-- Vulnerable URL: {target_url}
-
-PROOF OF CONCEPT (EVIDENCE):
-{evidence}
-
-BUSINESS IMPACT:
-{impact}
-
-REMEDIATION:
-{remediation}
-
-Please let me know if you require further details to validate this issue.
-
-Best regards,
-[Your Handle]
-"""
-            lines.append(draft)
+        email_draft.append(
+            "Please let me know if you require further details, full request/response logs, or assistance in validating these issues.\n\n"
+            "Best regards,\n"
+            "[Your Handle]"
+        )
 
         try:
-            draft_content = "\n" + ("=" * 80) + "\n\n".join(lines)
+            draft_content = "\n".join(email_draft)
             draft_path.write_text(draft_content.strip(), encoding="utf-8")
             self.console.print(f"  Draft: [underline]{draft_path.resolve()}[/underline]")
         except Exception as e:
