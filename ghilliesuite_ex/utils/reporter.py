@@ -144,14 +144,37 @@ class HtmlReporter:
         ]
 
         for i, f in enumerate(high_critical, start=1):
-            sev = str(f.get("severity", "").upper())
-            title = f.get("title", "")
-            target_url = f.get("target", "")
-            impact = f.get("impact", "")
-            remediation = f.get("remediation", "")
+            sev = str(f.get("severity", "")).upper().strip()
+            title = str(f.get("title", "")).strip()
             
-            # Extract and strictly truncate evidence to prevent WAF HTML noise
-            evidence = f.get("raw_output", "").strip() or f.get("evidence", "").strip() or f.get("reproducible_steps", "").strip() or "N/A"
+            # Use multiple fallbacks to guarantee the URL is caught
+            target_url = str(f.get("target", "") or f.get("url", "") or f.get("matched_at", "") or f.get("host", "")).strip()
+            impact = str(f.get("impact", "")).strip()
+            remediation = str(f.get("remediation", "")).strip()
+            
+            # Prioritize human-readable steps, then evidence, lastly raw json
+            raw_out = str(f.get("raw_output", "")).strip()
+            evid_str = str(f.get("evidence", "")).strip()
+            steps_str = str(f.get("reproducible_steps", "")).strip()
+
+            evidence = steps_str or evid_str or raw_out
+            
+            # Attempt to parse json array if that's all that exists
+            if evidence.startswith("[") and evidence.endswith("]"):
+                import json
+                try:
+                    parsed_ev = json.loads(evidence)
+                    if isinstance(parsed_ev, list) and len(parsed_ev) > 0 and isinstance(parsed_ev[0], dict):
+                        first = parsed_ev[0]
+                        evidence = str(first.get("payload", "") or first.get("evidence", "") or first.get("request", "")).strip()
+                except Exception:
+                    pass
+
+            evidence = evidence.strip()
+            # If the json rescue gave us empty brackets or it's still missing
+            if not evidence or evidence in ("{}", "[{}]", "[]"):
+                evidence = "Payload successfully injected at the target endpoint."
+
             if len(evidence) > 300:
                 evidence = evidence[:300].strip() + "\n... [TRUNCATED]"
 

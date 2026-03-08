@@ -340,9 +340,12 @@ def parse_dalfox(output: str, **kwargs) -> list[dict[str, Any]]:
         data = json.loads(output)
         if isinstance(data, list):
             for item in data:
+                url_val = item.get("data", "").strip()
+                if not url_val:
+                    continue  # Skip empty or malformed payload records
                 results.append({
                     "type":     item.get("type", "XSS"),
-                    "url":      item.get("data", ""),
+                    "url":      url_val,
                     "payload":  item.get("payload", ""),
                     "evidence": item.get("evidence", ""),
                 })
