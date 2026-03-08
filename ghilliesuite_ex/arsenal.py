@@ -195,12 +195,12 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
 
     "dalfox": ToolSpec(
         binary="dalfox",
-        base_cmd=["dalfox", "url", "{target}", "--silence", "--format", "json"],
-        scope_flag="url {target}",
+        base_cmd=["dalfox", "file", "{target}", "--silence", "--format", "json", "-w", "50"],
+        scope_flag=None,
         category="Exploitation",
         parser="dalfox",
         hitl_required=False,
-        description="XSS scanner and exploitation tool — discovers reflected, stored, and DOM XSS.",
+        description="XSS scanner and exploitation tool — discovers reflected, stored, and DOM XSS (Bulk Mode).",
     ),
 
     "sqlmap": ToolSpec(
