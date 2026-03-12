@@ -65,6 +65,12 @@ _AI_TECH_KEYWORDS: tuple[str, ...] = (
 )
 
 
+# ── Third-Party & CDN Denylist ────────────────────────────────────────────────
+_CDN_BLACKLIST: tuple[str, ...] = (
+    "shopifycloud", "wp-content/plugins", "wp-includes", 
+    "cdn.", "/assets/", "fonts.googleapis", "cdnjs.cloudflare"
+)
+
 def is_high_value_url(url: str) -> bool:
     """
     Return True if this URL is worth storing and testing.
@@ -75,8 +81,14 @@ def is_high_value_url(url: str) -> bool:
 
     Static asset extensions are NEVER high-value regardless of other rules
     — the caller is responsible for pre-filtering with has_static_extension().
+    NOTE: Also drops known CDNs using _CDN_BLACKLIST.
     """
     url_lower = url.lower()
+    
+    # Drop known CDN/Third-party noise
+    if any(cdn in url_lower for cdn in _CDN_BLACKLIST):
+        return False
+
     # Rule 1: has parameters
     if "?" in url:
         return True
@@ -88,11 +100,13 @@ def is_high_value_url(url: str) -> bool:
 
 
 def has_static_extension(url: str) -> bool:
-    """Return True if the URL path ends with a known static asset extension."""
+    """Return True if the URL path ends with a known static asset extension.
+    Uses urllib.parse to aggressively bypass .js?v=123 spoofing."""
+    import urllib.parse
     try:
-        # Strip query string and fragment before checking suffix
-        path = url.split("?")[0].split("#")[0].lower()
-        suffix = Path(path).suffix
+        # urlparse safely separates out the exact path string, ignoring query params and fragments
+        parsed_path = urllib.parse.urlparse(url).path.lower()
+        suffix = Path(parsed_path).suffix
         return suffix in STATIC_EXT_DENYLIST
     except Exception:
         return False
