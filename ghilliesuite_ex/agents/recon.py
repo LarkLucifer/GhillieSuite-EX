@@ -68,7 +68,7 @@ class ReconAgent(BaseAgent):
         run_sf = root_domain not in sf_history
 
         sf_cmd = build_command(
-            "subfinder", target,
+            "subfinder", root_domain,
             output_file=_SUBFINDER_OUT,
         )
         gau_cmd = build_command("gau", target)

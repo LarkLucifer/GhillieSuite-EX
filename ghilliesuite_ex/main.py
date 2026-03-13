@@ -258,7 +258,14 @@ async def _async_hunt(
 
     # ── Binary availability check ──────────────────────────────────────────
     console.print()
-    check_binaries(console)
+    results = check_binaries(console)
+    missing = [name for name in ("subfinder", "httpx", "katana") if not results.get(name)]
+    if missing:
+        console.print(
+            f"\n[bold red]Missing required recon tools:[/bold red] {', '.join(missing)}\n"
+            "Install them and ensure they are on your PATH, then re-run the hunt."
+        )
+        raise typer.Exit(code=1)
 
     # ── Nuclei template update (runs before hunting starts) ──────────────
     if update_templates:
