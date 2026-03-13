@@ -79,6 +79,41 @@ class Config:
     ai_provider: str = field(init=False, default="none")
     active_api_key: str = field(init=False, default="")
 
+    # —— Optional fallback provider (used when primary refuses/blocks)
+    ai_fallback_provider: str = field(
+        default_factory=lambda: os.getenv("AI_FALLBACK_PROVIDER", "").strip().lower()
+    )
+    ai_fallback_api_key: str = field(
+        default_factory=lambda: os.getenv("AI_FALLBACK_API_KEY", "").strip()
+    )
+    ai_fallback_base_url: str = field(
+        default_factory=lambda: os.getenv("AI_FALLBACK_BASE_URL", "").strip()
+    )
+    ai_fallback_model: str = field(
+        default_factory=lambda: os.getenv("AI_FALLBACK_MODEL", "").strip()
+    )
+
+    # —— Provider-specific fallback settings (used by ExploitAgent)
+    ollama_base_url: str = field(
+        default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
+    )
+    ollama_model: str = field(
+        default_factory=lambda: os.getenv("OLLAMA_MODEL", "llama3.1:8b").strip()
+    )
+    anthropic_api_key: str = field(
+        default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", "").strip()
+    )
+    anthropic_model: str = field(
+        default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20240620").strip()
+    )
+    xai_api_key: str = field(
+        default_factory=lambda: os.getenv("XAI_API_KEY", "").strip()
+    )
+    xai_model: str = field(
+        default_factory=lambda: os.getenv("XAI_MODEL", "grok-2-1212").strip()
+    )
+
+
     # ── CVE / NVD
     nvd_api_key: str = field(default_factory=lambda: os.getenv("NVD_API_KEY", "").strip())
 

@@ -334,6 +334,8 @@ def parse_nuclei(output: str, **kwargs) -> list[dict[str, Any]]:
                 "matched_url": data.get("matched-at", ""),
                 "description": data.get("info", {}).get("description", ""),
                 "reference":   ",".join(data.get("info", {}).get("reference", [])),
+                "request":     data.get("request", ""),
+                "response":    data.get("response", ""),
             })
         except json.JSONDecodeError:
             # nuclei sometimes prints non-JSON status lines; skip them
@@ -383,30 +385,34 @@ def parse_dalfox(output: str, **kwargs) -> list[dict[str, Any]]:
 
 def parse_sqlmap(output: str, **kwargs) -> list[dict[str, Any]]:
     """
-    sqlmap --batch text output — detect injection points.
-    Returns: [{"param", "technique", "dbms", "evidence"}, ...]
+    sqlmap --batch text output - detect injection points.
+    Returns: [{"param", "technique", "dbms", "payload", "evidence"}, ...]
     """
     results = []
     current: dict[str, Any] = {}
     for line in output.splitlines():
         line = line.strip()
-        if "is vulnerable" in line.lower() or "parameter" in line.lower() and "appears to be" in line.lower():
+        lower = line.lower()
+        if "parameter" in lower and ("appears to be" in lower or "is vulnerable" in lower):
             param_match = re.search(r"(?:parameter|Parameter)['\s]+(['\w]+)['\s]+(?:appears|is)", line)
             if param_match:
+                if current.get("param"):
+                    results.append({**current})
+                    current = {}
                 current["param"] = param_match.group(1)
-        if "technique:" in line.lower():
+        if "technique:" in lower:
             current["technique"] = line.split(":", 1)[-1].strip()
-        if "back-end dbms:" in line.lower() or "web application technology:" in line.lower():
+        if lower.startswith("payload:"):
+            current["payload"] = line.split(":", 1)[-1].strip()
+        if "back-end dbms:" in lower or "web application technology:" in lower:
             current["dbms"] = line.split(":", 1)[-1].strip()
             current["evidence"] = line
-        if current.get("param") and current.get("technique"):
-            results.append({**current})
-            current = {}
 
     if current.get("param"):
         results.append(current)
 
     return results
+
 
 
 def parse_ffuf(output: str = "", output_path: Path | None = None, **kwargs) -> list[dict[str, Any]]:
