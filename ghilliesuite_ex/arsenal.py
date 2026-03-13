@@ -61,6 +61,51 @@ _NODEJS_WORDLIST = [
     "app.js", ".env"
 ]
 
+# ── Stealth Mode Overrides ────────────────────────────────────────────────────
+# Applied when cfg.stealth_mode is True or build_command(..., stealth=True)
+_STEALTH_ARGS: dict[str, list[str]] = {
+    "nuclei": ["-rl", "20", "-c", "10"],
+    "sqlmap": ["--delay=1"],
+    "ffuf":   ["-t", "5", "-p", "0.5"],
+    "dirb":   ["-t", "5", "-p", "0.5"],
+}
+
+
+def apply_stealth_args(tool_name: str, cmd: list[str], enabled: bool) -> list[str]:
+    """
+    Inject conservative rate-limiting arguments for WAF avoidance.
+    Removes existing conflicting flags before appending stealth args.
+    """
+    if not enabled or tool_name not in _STEALTH_ARGS:
+        return list(cmd)
+
+    cleaned: list[str] = []
+    skip_next = False
+    for tok in cmd:
+        if skip_next:
+            skip_next = False
+            continue
+
+        if tool_name in ("nuclei",):
+            if tok in ("-rl", "-c"):
+                skip_next = True
+                continue
+        elif tool_name in ("ffuf", "dirb"):
+            if tok in ("-t", "-p"):
+                skip_next = True
+                continue
+        elif tool_name == "sqlmap":
+            if tok == "--delay":
+                skip_next = True
+                continue
+            if tok.startswith("--delay="):
+                continue
+
+        cleaned.append(tok)
+
+    cleaned.extend(_STEALTH_ARGS[tool_name])
+    return cleaned
+
 
 @dataclass
 class ToolSpec:
@@ -264,6 +309,7 @@ def build_command(
     input_file: str | Path | None = None,
     wordlist: str | None = None,
     auth_headers: list[str] | None = None,
+    stealth: bool | None = None,
     tech_stack: str = "",
 ) -> list[str]:
     """
@@ -289,6 +335,7 @@ def build_command(
         input_file:   Path the tool should read its input from (e.g. httpx -l).
         wordlist:     Path to wordlist (ffuf). Falls back to bundled list.
         auth_headers: Flat list of header flag pairs, e.g. ["-H", "Cookie: ..."].
+        stealth:      If True, apply conservative rate-limiting overrides.
 
     Returns:
         A fully-formed list[str] ready for asyncio.create_subprocess_exec.
@@ -324,6 +371,16 @@ def build_command(
 
     if extra_args:
         cmd.extend(extra_args)
+
+    if stealth is None:
+        try:
+            from ghilliesuite_ex.config import cfg as _cfg
+            stealth = bool(getattr(_cfg, "stealth_mode", False))
+        except Exception:
+            stealth = False
+
+    if stealth:
+        cmd = apply_stealth_args(tool_name, cmd, enabled=True)
 
     return cmd
 

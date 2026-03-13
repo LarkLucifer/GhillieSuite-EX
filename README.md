@@ -11,7 +11,7 @@
 SupervisorAgent (AI decision loop)
 ├── ReconAgent       → subfinder → [tmp/subfinder_out.txt] → httpx (File I/O)
 │                      gau (parallel) · katana (crawl)
-├── ExploitAgent     → nuclei · dalfox [HitL] · sqlmap [HitL]
+├── ExploitAgent     ? nuclei (cves/) ? nuclei ? dalfox [HitL] ? sqlmap [HitL]
 │                      ffuf [HitL] · BOLA/IDOR advisor · AI Prompt Injection advisor
 └── ReporterAgent    → HTML (Tailwind CSS) + JSON findings report
 
@@ -96,6 +96,7 @@ Options:
   --timeout             Per-tool timeout (seconds)            [default: 180]
   --safe-mode           HitL on ALL tools                     [flag]
   --force-auto          Bypass ALL HitL prompts (CI/CD mode)  [flag]
+  --stealth             Enable rate limiting for WAF evasion  [flag]
   --no-update-templates Skip nuclei -ut on startup            [flag]
   --cookie / -c         Session cookie string (authenticated scanning)
   --header              Custom HTTP header (e.g. Authorization: Bearer ...)
@@ -116,6 +117,7 @@ GhillieSuite-EX.sec version       Show version
 | Live host probing (JSON) | httpx (WAF-Bypass flags) | — |
 | Web crawling (authenticated) | katana | — |
 | CVE / misconfiguration scan | nuclei (Targeted tags) | Critical only |
+| **CVE Hunter (pre-fuzz)** | **nuclei (cves/ templates)** | Critical only |
 | XSS exploitation | dalfox | ✅ Always |
 | SQL injection | sqlmap | ✅ Always |
 | **Directory brute-force** | **ffuf (Context-Aware)** | — (Auto) |
@@ -137,7 +139,7 @@ All discovered findings pass through an `httpx` validation layer. 404 endpoints 
 
 ### Deep Research & Execution (Tier 0-9 Attacks)
 - **4-Stage Crash-Proof Pipeline**: The `ExploitAgent` strictly executes Recon → VulnScan → Contextual Exploitation → Advanced Logic. Every stage is wrapped in a global exception handler, guaranteeing a 100% stable 4-day unattended run.
-- **WAF Resilience**: Native execution of `httpx` and `nuclei` uses rotated user-agents, request retries, and strict rate limits (`-rl 50`) to bypass active WAFs and blocklisting.
+- **WAF Resilience**: Native execution of `httpx` and `nuclei` uses rotated user-agents, request retries, and strict rate limits (`-rl 50`) to bypass active WAFs and blocklisting. Add `--stealth` to apply conservative per-tool rate limiting (nuclei/sqlmap/ffuf).
 - **Cloud Metadata SSRF**: SSRF-prone endpoints are dynamically injected with AWS/GCP/Azure payloads (e.g., `169.254.169.254/latest/meta-data`). Responses are flagged if they contain cloud credentials or IAM profiles.
 - **Cache Poisoning**: Unkeyed headers (`X-Forwarded-Host`, `X-Host`) are sent with canary hostnames to verify reflection and edge cache pollution vulnerabilities.
 - **Prototype Pollution 2.0**: JS sinks are dynamically tested in a headless `playwright` sandbox to actively verify standard payload injections via `Object.assign`. Successfully poisoned objects are auto-promoted to critical severity with a VERIFIED label.
