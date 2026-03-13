@@ -93,6 +93,12 @@ def hunt(
         "--update-templates/--no-update-templates",
         help="Run 'nuclei -ut' on startup to fetch the latest CVE templates.",
     ),
+    stealth: bool = typer.Option(
+        False,
+        "--stealth",
+        help="Enable stealth rate-limiting to reduce WAF 429s (nuclei/sqlmap/ffuf).",
+        is_flag=True,
+    ),
     cookie: Optional[str] = typer.Option(
         None,
         "--cookie", "-c",
@@ -149,6 +155,7 @@ def hunt(
         timeout=timeout,
         safe_mode=safe_mode,
         update_templates=update_templates,
+        stealth=stealth,
         cookie=cookie,
         header=header,
         force_auto=force_auto,
@@ -172,6 +179,7 @@ async def _async_hunt(
     timeout: int,
     safe_mode: bool,
     update_templates: bool,
+    stealth: bool,
     cookie: str | None,
     header: str | None,
     force_auto: bool = False,
@@ -180,7 +188,7 @@ async def _async_hunt(
     from ghilliesuite_ex.config import cfg, validate_config
     from ghilliesuite_ex.agents.supervisor import SupervisorAgent
     from ghilliesuite_ex.agents.base import AgentTask
-    from ghilliesuite_ex.utils.executor import run_tool
+    from ghilliesuite_ex.utils.nuclei import update_nuclei_templates
 
     # ── Banner ─────────────────────────────────────────────────────────────
     print_banner(console)
@@ -201,6 +209,10 @@ async def _async_hunt(
         cfg.auth_cookie = cookie.strip()
     if header:
         cfg.auth_header = header.strip()
+
+    if stealth:
+        cfg.stealth_mode = True
+        console.print("[bold yellow]Stealth mode enabled[/bold yellow]  [dim]— lower request rate & concurrency[/dim]")
 
     if cfg.is_authenticated:
         console.print(
@@ -248,10 +260,10 @@ async def _async_hunt(
     console.print()
     check_binaries(console)
 
-    # ── Nuclei template update (non-blocking, runs in background) ─────────
+    # ── Nuclei template update (runs before hunting starts) ──────────────
     if update_templates:
         console.print("\n[cyan]Updating nuclei templates (nuclei -ut)…[/cyan]")
-        nuclei_update = await run_tool(["nuclei", "-ut"], timeout=120)
+        nuclei_update = await asyncio.to_thread(update_nuclei_templates, 120)
         if nuclei_update.ok:
             console.print("[green]✔ Nuclei templates updated.[/green]")
         else:
