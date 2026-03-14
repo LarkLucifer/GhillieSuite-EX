@@ -227,7 +227,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "-severity", "medium,high,critical",
             "-rl", "50",    # rate-limit to 50 req/s — avoids WAF/IDS triggers
             "-c", "20",     # concurrency: 20 parallel template checks
-            "-silent", "-json",
+            "-silent", "-j",
         ],
         scope_flag="-u {target}",
         category="VulnScan",
