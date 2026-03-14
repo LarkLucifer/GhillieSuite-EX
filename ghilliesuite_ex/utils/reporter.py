@@ -342,12 +342,17 @@ def _render_html(
     hosts = active_hosts
 
     total = len(findings)
-    counts = {s: sum(1 for f in findings if f["severity"] == s) for s in _SEVERITY_ORDER}
+    counts_all = {s: sum(1 for f in findings if f["severity"] == s) for s in _SEVERITY_ORDER}
+
+    # Separate stealth probes from standard findings
+    stealth_findings = [f for f in findings if f.get("tool") == "stealth_payload"]
+    non_stealth = [f for f in findings if f.get("tool") != "stealth_payload"]
 
     # Separate hot (actionable) findings from passive advisories and low/info noise
-    hot_findings  = [f for f in findings if f["severity"] in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
-    advisories    = [f for f in findings if f["tool"] in _ADVISORY_TOOLS]
-    cold_findings = [f for f in findings if f["severity"] not in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
+    hot_findings  = [f for f in non_stealth if f["severity"] in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
+    advisories    = [f for f in non_stealth if f["tool"] in _ADVISORY_TOOLS]
+    cold_findings = [f for f in non_stealth if f["severity"] not in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
+    counts_hot = {s: sum(1 for f in hot_findings if f["severity"] == s) for s in _SEVERITY_ORDER}
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -397,9 +402,9 @@ def _render_html(
       <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs">Executive Summary</h2>
       <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
         {_stat_card("Total Findings", str(total), "bg-gray-800", "text-white")}
-        {_stat_card("Critical", str(counts['critical']), "bg-red-950 border border-red-700", "text-red-400")}
-        {_stat_card("High", str(counts['high']), "bg-orange-950 border border-orange-700", "text-orange-400")}
-        {_stat_card("Medium", str(counts['medium']), "bg-yellow-950 border border-yellow-700", "text-yellow-400")}
+        {_stat_card("Critical", str(counts_all['critical']), "bg-red-950 border border-red-700", "text-red-400")}
+        {_stat_card("High", str(counts_all['high']), "bg-orange-950 border border-orange-700", "text-orange-400")}
+        {_stat_card("Medium", str(counts_all['medium']), "bg-yellow-950 border border-yellow-700", "text-yellow-400")}
         {_stat_card("Hosts Found", str(len(hosts)), "bg-gray-800", "text-sky-400")}
         {_stat_card("Endpoints", str(len(endpoints)), "bg-gray-800", "text-violet-400")}
       </div>
@@ -421,15 +426,15 @@ def _render_html(
         </button>
         <button class="filter-btn text-xs px-3 py-1.5 rounded-full bg-red-900 text-red-200 font-semibold"
                 data-filter="critical" onclick="filterFindings('critical', this)">
-          🔴 CRITICAL ({counts['critical']})
+          🔴 CRITICAL ({counts_hot['critical']})
         </button>
         <button class="filter-btn text-xs px-3 py-1.5 rounded-full bg-orange-900 text-orange-200 font-semibold"
                 data-filter="high" onclick="filterFindings('high', this)">
-          🟠 HIGH ({counts['high']})
+          🟠 HIGH ({counts_hot['high']})
         </button>
         <button class="filter-btn text-xs px-3 py-1.5 rounded-full bg-yellow-900 text-yellow-200 font-semibold"
                 data-filter="medium" onclick="filterFindings('medium', this)">
-          🟡 MEDIUM ({counts['medium']})
+          🟡 MEDIUM ({counts_hot['medium']})
         </button>
       </div>
 
@@ -446,6 +451,16 @@ def _render_html(
       </h2>
       <p class="text-gray-500 text-sm mb-4">Passive analysis only — no active exploit traffic sent. Verify manually.</p>
       {"".join(_finding_card(f) for f in advisories)}
+    </section>'''}
+
+    <!-- ── AI Stealth Probes ───────────────────────────────────────────────────── -->
+    {"" if not stealth_findings else f'''
+    <section id="stealth-probes">
+      <h2 class="text-lg font-semibold text-gray-300 mb-5 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
+        AI Stealth Probes &amp; WAF Bypasses ({len(stealth_findings)})
+      </h2>
+      <p class="text-gray-500 text-sm mb-4">Targeted low-noise probes executed via Python requests. Includes WAF bypass attempts and response evidence.</p>
+      {"".join(_finding_card(f) for f in stealth_findings)}
     </section>'''}
 
     <!-- ── Low / Info (collapsed) ────────────────────────────────────────────── -->

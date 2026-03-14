@@ -40,8 +40,20 @@ class ReporterAgent(BaseAgent):
         hosts = await self.db.get_hosts()
         endpoints = await self.db.get_endpoints()
 
-        # ── Terminal table ─────────────────────────────────────────────────
-        findings_table(self.console, findings)
+        # ── Terminal tables ────────────────────────────────────────────────
+        if not findings:
+            findings_table(self.console, findings)
+        else:
+            stealth_findings = [f for f in findings if f.tool == "stealth_payload"]
+            standard_findings = [f for f in findings if f.tool != "stealth_payload"]
+            if standard_findings:
+                findings_table(self.console, standard_findings, title="Findings Summary")
+            if stealth_findings:
+                findings_table(
+                    self.console,
+                    stealth_findings,
+                    title="AI Stealth Probes & WAF Bypasses",
+                )
 
         # ── Resolve output dir ─────────────────────────────────────────────
         output_dir = Path("reports")

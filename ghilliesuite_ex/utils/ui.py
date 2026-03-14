@@ -149,7 +149,7 @@ def hitl_prompt(
     return approved
 
 
-def findings_table(console: Console, findings: list) -> None:
+def findings_table(console: Console, findings: list, title: str = "Findings Summary") -> None:
     """
     Print a colour-coded findings table sorted by severity.
     findings: list of Finding dataclass instances.
@@ -159,7 +159,7 @@ def findings_table(console: Console, findings: list) -> None:
         return
 
     console.print()
-    console.print(Rule("[bold]📋  Findings Summary[/bold]", style="bright_white"))
+    console.print(Rule(f"[bold]📋  {title}[/bold]", style="bright_white"))
 
     table = Table(
         show_lines=True,

@@ -189,6 +189,12 @@ class Config:
     If True, apply conservative per-tool rate limiting to reduce WAF 429s.
     Injected into nuclei/sqlmap/ffuf/dirb command lines by build_command().
     """
+    # ── Disable stealth override — set at runtime by the CLI --disable-stealth flag
+    disable_stealth: bool = False
+    """
+    If True, ignore Commander/WAF stealth signals and run full execution.
+    This overrides any auto-stealth detection for lab or WAF stress testing.
+    """
     def __post_init__(self) -> None:
         """Run auto-detection immediately after the dataclass is initialised."""
         self.ai_provider, self.active_api_key = detect_ai_provider()
