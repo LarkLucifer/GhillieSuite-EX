@@ -144,6 +144,11 @@ def get_parser(tool_name: str):
         "sqlmap":     parse_sqlmap,
         "trufflehog": parse_trufflehog,
         "ffuf":       parse_ffuf,
+        "dnsx":       parse_dnsx,
+        "naabu":      parse_naabu,
+        "arjun":      parse_arjun,
+        "subzy":      parse_subzy,
+        "gowitness":  parse_gowitness,
     }
     return parsers.get(tool_name, _passthrough)
 
@@ -503,5 +508,231 @@ def parse_trufflehog(output: str, **kwargs) -> list[dict[str, Any]]:
                 "url":                data.get("SourceMetadata", {}).get("Data", {}).get("Github", {}).get("link", ""),
             })
         except json.JSONDecodeError:
+            pass
+    return results
+
+
+# -------- New Recon Parsers --------
+
+def parse_dnsx(output: str = "", output_path: Path | None = None) -> list[dict[str, Any]]:
+    """
+    Parse dnsx output.
+    JSON lines expected with keys like: host/domain, ip.
+    Fallback: "domain ip" or "ip domain" per line.
+    Returns: [{"domain": str, "ip": str}, ...]
+    """
+    if output_path and output_path.exists():
+        try:
+            text = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = output
+    else:
+        text = output
+
+    results: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+                domain = data.get("host") or data.get("domain") or data.get("name") or ""
+                ip = data.get("ip") or data.get("a") or data.get("address") or ""
+                if domain and ip:
+                    results.append({"domain": domain, "ip": ip})
+                continue
+            except json.JSONDecodeError:
+                pass
+        # Fallback line parsing
+        parts = line.split()
+        if len(parts) >= 2:
+            a, b = parts[0].strip(), parts[1].strip()
+            # Heuristic: IP contains digits and dots
+            if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", a):
+                results.append({"domain": b, "ip": a})
+            elif re.match(r"^\d{1,3}(\.\d{1,3}){3}$", b):
+                results.append({"domain": a, "ip": b})
+    return results
+
+
+def parse_naabu(output: str = "", output_path: Path | None = None) -> list[dict[str, Any]]:
+    """
+    Parse naabu output.
+    JSON lines expected with keys like: host, ip, port, protocol.
+    Fallback: "host:port" or "ip:port" per line.
+    Returns: [{"host": str, "ip": str, "port": int, "proto": str}, ...]
+    """
+    if output_path and output_path.exists():
+        try:
+            text = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = output
+    else:
+        text = output
+
+    results: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+                host = data.get("host") or data.get("hostname") or data.get("ip") or ""
+                ip = data.get("ip") or ""
+                port = int(data.get("port") or 0)
+                proto = (data.get("protocol") or data.get("proto") or "tcp").lower()
+                if host and port:
+                    results.append({"host": host, "ip": ip, "port": port, "proto": proto})
+                continue
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+        # Fallback: host:port
+        if ":" in line:
+            host_part, port_part = line.rsplit(":", 1)
+            try:
+                port = int(port_part.strip())
+            except ValueError:
+                continue
+            results.append({"host": host_part.strip(), "ip": "", "port": port, "proto": "tcp"})
+    return results
+
+
+def parse_arjun(output: str = "", output_path: Path | None = None) -> list[dict[str, Any]]:
+    """
+    Parse arjun output.
+    JSON expected via -oJ: list of objects with url/endpoint, method, and params.
+    Fallback: line parsing of "URL: param1, param2".
+    Returns: [{"url": str, "method": str, "params": list[str]}]
+    """
+    if output_path and output_path.exists():
+        try:
+            text = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = output
+    else:
+        text = output
+
+    results: list[dict[str, Any]] = []
+    # Try JSON as full document first
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                url = item.get("url") or item.get("endpoint") or ""
+                method = (item.get("method") or "GET").upper()
+                params = item.get("params") or item.get("parameters") or []
+                if isinstance(params, str):
+                    params = [p.strip() for p in params.split(",") if p.strip()]
+                if url and params:
+                    results.append({"url": url, "method": method, "params": params})
+            return results
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Fallback: line parsing
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Example: "https://example.com/api: param1, param2"
+        if ":" in line and "http" in line:
+            left, right = line.split(":", 1)
+            url = left.strip()
+            params = [p.strip() for p in right.split(",") if p.strip()]
+            if url and params:
+                results.append({"url": url, "method": "GET", "params": params})
+    return results
+
+
+def parse_subzy(output: str = "", output_path: Path | None = None) -> list[dict[str, Any]]:
+    """
+    Parse subzy output (subdomain takeover checks).
+    JSON lines expected with domain/status fields.
+    Fallback: detect "VULNERABLE" lines.
+    Returns: [{"domain": str, "status": str, "vulnerable": bool}]
+    """
+    if output_path and output_path.exists():
+        try:
+            text = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = output
+    else:
+        text = output
+
+    results: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+                domain = data.get("domain") or data.get("host") or ""
+                status = data.get("status") or data.get("result") or ""
+                vuln = bool(data.get("vulnerable") or ("vulnerable" in status.lower()))
+                if domain:
+                    results.append({"domain": domain, "status": status, "vulnerable": vuln})
+                continue
+            except json.JSONDecodeError:
+                pass
+        upper = line.upper()
+        if "VULNERABLE" in upper:
+            m = re.search(r"([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", line)
+            if m:
+                results.append({"domain": m.group(1), "status": "VULNERABLE", "vulnerable": True})
+    return results
+
+
+def parse_gowitness(output: str = "", output_path: Path | None = None) -> list[dict[str, Any]]:
+    """
+    Parse gowitness JSON report if enabled.
+    Returns: [{"url": str, "screenshot": str, "title": str, "status": int}]
+    """
+    if output_path and output_path.exists():
+        try:
+            text = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = output
+    else:
+        text = output
+
+    if not text.strip():
+        return []
+
+    results: list[dict[str, Any]] = []
+    try:
+        data = json.loads(text)
+        if isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                results.append({
+                    "url": item.get("url", ""),
+                    "screenshot": item.get("screenshot", "") or item.get("screenshot_path", ""),
+                    "title": item.get("title", ""),
+                    "status": int(item.get("status") or 0),
+                })
+            return results
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    # Fallback: JSON lines
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            item = json.loads(line)
+            results.append({
+                "url": item.get("url", ""),
+                "screenshot": item.get("screenshot", "") or item.get("screenshot_path", ""),
+                "title": item.get("title", ""),
+                "status": int(item.get("status") or 0),
+            })
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass
     return results

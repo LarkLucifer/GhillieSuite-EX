@@ -25,7 +25,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from .models import CVEResult, Endpoint, Finding, Host
+from .models import CVEResult, Endpoint, Finding, Host, Service
 
 # ── DDL ───────────────────────────────────────────────────────────────────────
 SCHEMA_SQL = """
@@ -42,6 +42,17 @@ CREATE TABLE IF NOT EXISTS hosts (
     server       TEXT    DEFAULT '',
     tech_stack   TEXT    DEFAULT '',
     discovered_at TEXT   NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS services (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    host_id       INTEGER NOT NULL REFERENCES hosts(id),
+    port          INTEGER NOT NULL,
+    proto         TEXT    DEFAULT 'tcp',
+    service       TEXT    DEFAULT '',
+    source_tool   TEXT    DEFAULT '',
+    discovered_at TEXT    NOT NULL,
+    UNIQUE(host_id, port, proto)
 );
 
 CREATE TABLE IF NOT EXISTS endpoints (
@@ -79,7 +90,7 @@ CREATE TABLE IF NOT EXISTS cve_cache (
 """
 
 # Tables that hold per-target scan data — wiped when target changes
-_DATA_TABLES = ["findings", "endpoints", "hosts", "cve_cache"]
+_DATA_TABLES = ["findings", "endpoints", "services", "hosts", "cve_cache"]
 
 
 class StateDB:
@@ -160,6 +171,38 @@ class StateDB:
             return result["id"] if result else 0
         return cursor.lastrowid  # type: ignore[return-value]
 
+    async def upsert_host(self, host: Host) -> int:
+        """
+        Insert or update a host record. Updates non-empty fields on conflict.
+        Returns the row id of the host.
+        """
+        # Try insert first
+        host_id = await self.insert_host(host)
+        # Update non-empty fields if already exists
+        if host_id:
+            updates = []
+            params: list = []
+            if host.ip:
+                updates.append("ip = ?")
+                params.append(host.ip)
+            if host.status_code:
+                updates.append("status_code = ?")
+                params.append(host.status_code)
+            if host.server:
+                updates.append("server = ?")
+                params.append(host.server)
+            if host.tech_stack:
+                updates.append("tech_stack = ?")
+                params.append(host.tech_stack)
+            if updates:
+                params.append(host.domain)
+                await self._db.execute(
+                    f"UPDATE hosts SET {', '.join(updates)} WHERE domain = ?",
+                    params,
+                )
+                await self._db.commit()
+        return host_id
+
     async def get_hosts(self, scope_domains: list[str] | None = None) -> list[Host]:
         """
         Return all live hosts, optionally filtered to in-scope domains.
@@ -182,6 +225,47 @@ class StateDB:
             hosts = [h for h in hosts if _is_in_scope(h.domain, scope_domains)]
         return hosts
 
+    # -------- Services --------
+
+    async def insert_service(self, service: Service) -> int:
+        """Insert or ignore a service record. Returns the row id."""
+        cursor = await self._db.execute(
+            """
+            INSERT OR IGNORE INTO services (host_id, port, proto, service, source_tool, discovered_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                service.host_id,
+                service.port,
+                service.proto,
+                service.service,
+                service.source_tool,
+                service.discovered_at,
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0  # type: ignore[return-value]
+
+    async def get_services(self, host_id: int | None = None) -> list[Service]:
+        query = "SELECT * FROM services WHERE 1=1"
+        params: list = []
+        if host_id is not None:
+            query += " AND host_id = ?"
+            params.append(host_id)
+        rows = await (await self._db.execute(query, params)).fetchall()
+        return [
+            Service(
+                id=r["id"],
+                host_id=r["host_id"],
+                port=r["port"],
+                proto=r["proto"],
+                service=r["service"],
+                source_tool=r["source_tool"],
+                discovered_at=r["discovered_at"],
+            )
+            for r in rows
+        ]
+
     # ── Endpoints ─────────────────────────────────────────────────────────────
 
     async def insert_endpoint(self, ep: Endpoint) -> int:
@@ -194,6 +278,26 @@ class StateDB:
         )
         await self._db.commit()
         return cursor.lastrowid or 0  # type: ignore[return-value]
+
+    async def update_endpoint_params(self, url: str, params: str) -> None:
+        """Update params for an existing endpoint, merging with any current params."""
+        row = await (
+            await self._db.execute("SELECT params FROM endpoints WHERE url = ?", (url,))
+        ).fetchone()
+        if not row:
+            return
+        current = row["params"] or ""
+        if not current:
+            merged = params
+        else:
+            current_set = {p.strip() for p in current.split(",") if p.strip()}
+            new_set = {p.strip() for p in params.split(",") if p.strip()}
+            merged = ",".join(sorted(current_set.union(new_set)))
+        await self._db.execute(
+            "UPDATE endpoints SET params = ? WHERE url = ?",
+            (merged, url),
+        )
+        await self._db.commit()
 
     async def get_endpoints(
         self,

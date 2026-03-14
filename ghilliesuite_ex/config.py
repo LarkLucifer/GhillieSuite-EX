@@ -180,6 +180,10 @@ class Config:
     auth_header: str = ""
     """Value of --header CLI flag. e.g. 'Authorization: Bearer eyJ...' """
 
+    # Optional screenshots (gowitness) — set at runtime by CLI
+    enable_screenshots: bool = False
+    """If True, enable gowitness screenshots during recon."""
+
     @property
     def auth_headers_flags(self) -> list[str]:
         """
