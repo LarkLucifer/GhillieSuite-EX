@@ -64,7 +64,7 @@ _NODEJS_WORDLIST = [
 # ── Stealth Mode Overrides ────────────────────────────────────────────────────
 # Applied when cfg.stealth_mode is True or build_command(..., stealth=True)
 _STEALTH_ARGS: dict[str, list[str]] = {
-    "nuclei": ["-rl", "20", "-c", "10"],
+    "nuclei": ["-rl", "10", "-c", "5", "-bs", "1"],
     "sqlmap": ["--delay=1"],
     "ffuf":   ["-t", "5", "-p", "0.5"],
     "dirb":   ["-t", "5", "-p", "0.5"],
@@ -87,7 +87,7 @@ def apply_stealth_args(tool_name: str, cmd: list[str], enabled: bool) -> list[st
             continue
 
         if tool_name in ("nuclei",):
-            if tok in ("-rl", "-c"):
+            if tok in ("-rl", "-c", "-bs"):
                 skip_next = True
                 continue
         elif tool_name in ("ffuf", "dirb"):

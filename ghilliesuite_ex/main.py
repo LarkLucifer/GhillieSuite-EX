@@ -99,6 +99,12 @@ def hunt(
         help="Enable stealth rate-limiting to reduce WAF 429s (nuclei/sqlmap/ffuf).",
         is_flag=True,
     ),
+    disable_stealth: bool = typer.Option(
+        False,
+        "--disable-stealth",
+        help="Disable sniper protocol and ignore WAF/Commander stealth signals (full-speed execution).",
+        is_flag=True,
+    ),
     cookie: Optional[str] = typer.Option(
         None,
         "--cookie", "-c",
@@ -156,6 +162,7 @@ def hunt(
         safe_mode=safe_mode,
         update_templates=update_templates,
         stealth=stealth,
+        disable_stealth=disable_stealth,
         cookie=cookie,
         header=header,
         force_auto=force_auto,
@@ -180,6 +187,7 @@ async def _async_hunt(
     safe_mode: bool,
     update_templates: bool,
     stealth: bool,
+    disable_stealth: bool,
     cookie: str | None,
     header: str | None,
     force_auto: bool = False,
@@ -213,6 +221,19 @@ async def _async_hunt(
     if stealth:
         cfg.stealth_mode = True
         console.print("[bold yellow]Stealth mode enabled[/bold yellow]  [dim]— lower request rate & concurrency[/dim]")
+
+    if disable_stealth:
+        cfg.disable_stealth = True
+        if cfg.stealth_mode:
+            console.print(
+                "[bold yellow]Stealth override disabled[/bold yellow]  "
+                "[dim]— --disable-stealth overrides --stealth[/dim]"
+            )
+        cfg.stealth_mode = False
+        console.print(
+            "[bold yellow]Sniper protocol disabled[/bold yellow]  "
+            "[dim]— WAF signals will not reduce execution[/dim]"
+        )
 
     if cfg.is_authenticated:
         console.print(
