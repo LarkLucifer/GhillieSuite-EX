@@ -71,3 +71,18 @@ class CVEResult:
     fetched_at: str = field(
         default_factory=lambda: datetime.utcnow().isoformat()
     )
+
+
+@dataclass
+class Service:
+    """A network service discovered on a host (port/protocol)."""
+
+    host_id: int
+    port: int
+    proto: str = "tcp"
+    service: str = ""
+    source_tool: str = ""
+    discovered_at: str = field(
+        default_factory=lambda: datetime.utcnow().isoformat()
+    )
+    id: int | None = None

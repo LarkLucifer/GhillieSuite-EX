@@ -9,20 +9,21 @@
 
 ```
 SupervisorAgent (AI decision loop)
-├── ReconAgent       → subfinder → [tmp/subfinder_out.txt] → httpx (File I/O)
-│                      gau (parallel) · katana (crawl)
+├── ReconAgent       → subfinder → dnsx → naabu → httpx → katana → gau → arjun
+│                      (file-based handoffs; host:port aware probing)
 ├── ExploitAgent     ? nuclei (cves/) ? nuclei ? dalfox [HitL] ? sqlmap [HitL]
 │                      ffuf [HitL] · BOLA/IDOR advisor · AI Prompt Injection advisor
 └── ReporterAgent    → HTML (Tailwind CSS) + JSON findings report
 
 StateDB (SQLite via aiosqlite @ ~/GhillieSuite-EX/ghilliesuite_state.db)
-├── hosts      (domain, status, tech_stack, tags)
+├── hosts      (domain, ip, status, tech_stack, tags)
+├── services   (host_id, port, proto, source_tool)
 ├── endpoints  (url, params — high-value only)
 ├── findings   (severity, title, reproducible_steps)
 └── cve_cache
 ```
 
-**Pipeline:** subfinder writes `tmp/subfinder_out.txt` → httpx reads it via `-l`, writes `tmp/httpx_out.json` → parsers read from file. No stdin piping.
+**Pipeline:** subfinder writes `tmp/subfinder_out.txt` → dnsx resolves → naabu scans ports → httpx probes host:port targets and writes `tmp/httpx_out.json` → katana/gau/arjun enrich endpoints. No stdin piping.
 
 ---
 
@@ -49,9 +50,14 @@ cp .env.example .env
 | Tool | Install |
 |------|---------| 
 | subfinder | `go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
+| dnsx | `go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest` |
+| naabu | `go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` |
 | httpx | `go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest` |
 | katana | `go install github.com/projectdiscovery/katana/cmd/katana@latest` |
 | gau | `go install github.com/lc/gau/v2/cmd/gau@latest` |
+| arjun | `pip install arjun` |
+| subzy | `go install github.com/lukasikic/subzy@latest` |
+| gowitness | `go install github.com/sensepost/gowitness@latest` |
 | nuclei | `go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
 | dalfox | `go install github.com/hahwul/dalfox/v2@latest` |
 | sqlmap | `pip install sqlmap` |
@@ -100,6 +106,7 @@ Options:
   --no-update-templates Skip nuclei -ut on startup            [flag]
   --cookie / -c         Session cookie string (authenticated scanning)
   --header              Custom HTTP header (e.g. Authorization: Bearer ...)
+  --screenshots         Enable gowitness screenshots (optional)
 
 GhillieSuite-EX.sec check-tools   Show binary availability
 GhillieSuite-EX.sec check-config  Validate .env + show detected AI provider
@@ -113,9 +120,14 @@ GhillieSuite-EX.sec version       Show version
 | Vector | Tool | HitL |
 |--------|------|------|
 | Subdomain enumeration | subfinder | — |
+| DNS resolution | dnsx | — |
+| Port discovery | naabu | — |
 | Historical URL discovery | gau | — |
 | Live host probing (JSON) | httpx (WAF-Bypass flags) | — |
 | Web crawling (authenticated) | katana | — |
+| Parameter discovery | arjun | — |
+| Subdomain takeover checks | subzy | — |
+| Visual recon (screenshots) | gowitness | Optional |
 | CVE / misconfiguration scan | nuclei (Targeted tags) | Critical only |
 | **CVE Hunter (pre-fuzz)** | **nuclei (cves/ templates)** | Critical only |
 | XSS exploitation | dalfox | ✅ Always |

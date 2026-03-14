@@ -137,6 +137,12 @@ def hunt(
         ),
         show_default=False,
     ),
+    screenshots: bool = typer.Option(
+        False,
+        "--screenshots",
+        help="Enable gowitness screenshots during recon (optional).",
+        is_flag=True,
+    ),
     force_auto: bool = typer.Option(
         False,
         "--force-auto",
@@ -215,6 +221,7 @@ def hunt(
         disable_stealth=disable_stealth,
         cookie=cookie,
         header=header,
+        screenshots=screenshots,
         force_auto=force_auto,
         js_workers=js_workers,
         js_max_files=js_max_files,
@@ -248,6 +255,7 @@ async def _async_hunt(
     disable_stealth: bool,
     cookie: str | None,
     header: str | None,
+    screenshots: bool = False,
     force_auto: bool = False,
     js_workers: int | None = None,
     js_max_files: int | None = None,
@@ -281,6 +289,8 @@ async def _async_hunt(
         cfg.auth_cookie = cookie.strip()
     if header:
         cfg.auth_header = header.strip()
+
+    cfg.enable_screenshots = bool(screenshots)
 
     if stealth:
         cfg.stealth_mode = True

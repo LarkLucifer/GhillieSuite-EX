@@ -175,6 +175,33 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         description="Passive subdomain enumeration using many sources (certsh, virustotal, etc.). Writes results to a file.",
     ),
 
+    "dnsx": ToolSpec(
+        binary="dnsx",
+        base_cmd=["dnsx", "-l", "{input_file}", "-json", "-o", "{output_file}"],
+        scope_flag=None,
+        category="Recon",
+        parser="dnsx",
+        hitl_required=False,
+        uses_output_file=True,
+        uses_input_file=True,
+        description="DNS resolution for subdomains; returns domain->IP mappings.",
+    ),
+
+    "naabu": ToolSpec(
+        binary="naabu",
+        base_cmd=[
+            "naabu", "-list", "{input_file}", "-json", "-o", "{output_file}",
+            "-top-ports", "1000", "-silent",
+        ],
+        scope_flag=None,
+        category="Recon",
+        parser="naabu",
+        hitl_required=False,
+        uses_output_file=True,
+        uses_input_file=True,
+        description="Fast port discovery for discovered hosts; JSON output for parsing.",
+    ),
+
     "httpx": ToolSpec(
         binary="httpx",
         base_cmd=[
@@ -215,6 +242,42 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         parser="gau",
         hitl_required=False,
         description="Fetch known URLs from Wayback Machine, Common Crawl, and URLScan.",
+    ),
+
+    "arjun": ToolSpec(
+        binary="arjun",
+        base_cmd=["arjun", "-i", "{input_file}", "-oJ", "{output_file}"],
+        scope_flag=None,
+        category="Recon",
+        parser="arjun",
+        hitl_required=False,
+        uses_output_file=True,
+        uses_input_file=True,
+        description="Parameter discovery for URLs; outputs JSON parameter lists.",
+    ),
+
+    "subzy": ToolSpec(
+        binary="subzy",
+        base_cmd=["subzy", "run", "--targets", "{input_file}", "--output", "{output_file}", "--json"],
+        scope_flag=None,
+        category="Recon",
+        parser="subzy",
+        hitl_required=False,
+        uses_output_file=True,
+        uses_input_file=True,
+        description="Subdomain takeover detection using fingerprint checks.",
+    ),
+
+    "gowitness": ToolSpec(
+        binary="gowitness",
+        base_cmd=["gowitness", "file", "-f", "{input_file}", "--json", "-o", "{output_file}"],
+        scope_flag=None,
+        category="Recon",
+        parser="gowitness",
+        hitl_required=False,
+        uses_output_file=True,
+        uses_input_file=True,
+        description="Captures screenshots of live web endpoints (optional).",
     ),
 
     # ── Vulnerability Scanning ────────────────────────────────────────────────
