@@ -69,6 +69,15 @@ class ReporterAgent(BaseAgent):
             "target": target,
             "generated_at": datetime.utcnow().isoformat(),
             "scope": self.scope,
+            "scan_config": {
+                "js_deep_inspection": {
+                    "js_max_workers": self.cfg.js_max_workers,
+                    "js_llm_concurrency": self.cfg.js_llm_concurrency,
+                    "js_snippet_max_len": self.cfg.js_snippet_max_len,
+                    "js_http_timeout": self.cfg.js_http_timeout,
+                    "js_llm_timeout": self.cfg.js_llm_timeout,
+                }
+            },
             "stats": {
                 "hosts": len(hosts),
                 "endpoints": len(endpoints),
@@ -113,6 +122,16 @@ class ReporterAgent(BaseAgent):
             f"| Hosts discovered | {len(hosts)} |",
             f"| Endpoints mapped | {len(endpoints)} |",
             f"| Total findings   | {len(findings)} |",
+            f"",
+            f"## JS Deep Inspection Config",
+            f"",
+            f"| Setting | Value |",
+            f"|---------|-------|",
+            f"| `js_max_workers` | {self.cfg.js_max_workers} |",
+            f"| `js_llm_concurrency` | {self.cfg.js_llm_concurrency} |",
+            f"| `js_snippet_max_len` | {self.cfg.js_snippet_max_len} |",
+            f"| `js_http_timeout` | {self.cfg.js_http_timeout} |",
+            f"| `js_llm_timeout` | {self.cfg.js_llm_timeout} |",
             f"",
         ]
 
@@ -219,6 +238,13 @@ class ReporterAgent(BaseAgent):
         self.console.print(Rule("[bold bright_green]✔  Report saved[/bold bright_green]", style="bright_green"))
         self.console.print(f"  JSON: [underline]{json_path.resolve()}[/underline]")
         self.console.print(f"  MD:   [underline]{md_path.resolve()}[/underline]")
+        self.console.print(
+            f"[dim]  JS Deep Inspection config: workers={self.cfg.js_max_workers}, "
+            f"llm_concurrency={self.cfg.js_llm_concurrency}, "
+            f"snippet_max_len={self.cfg.js_snippet_max_len}, "
+            f"http_timeout={self.cfg.js_http_timeout}s, "
+            f"llm_timeout={self.cfg.js_llm_timeout}s[/dim]"
+        )
 
         # ── HTML Report ────────────────────────────────────────────────────
         try:
