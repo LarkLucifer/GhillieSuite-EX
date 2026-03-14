@@ -96,6 +96,14 @@ class HtmlReporter:
         self.console.print(f"[cyan]  Generating AI summaries for {len(findings)} finding(s)…[/cyan]")
         enriched = await self._enrich_findings(findings, hosts)
 
+        js_config = {
+            "js_max_workers": self.cfg.js_max_workers,
+            "js_llm_concurrency": self.cfg.js_llm_concurrency,
+            "js_snippet_max_len": self.cfg.js_snippet_max_len,
+            "js_http_timeout": self.cfg.js_http_timeout,
+            "js_llm_timeout": self.cfg.js_llm_timeout,
+        }
+
         html_content = _render_html(
             target=target,
             scope=scope,
@@ -103,6 +111,7 @@ class HtmlReporter:
             findings=enriched,
             hosts=hosts,
             endpoints=endpoints,
+            js_config=js_config,
         )
 
         html_path.write_text(html_content, encoding="utf-8")
@@ -327,6 +336,7 @@ def _render_html(
     findings: list[dict[str, Any]],
     hosts: list[Host],
     endpoints: list[Endpoint],
+    js_config: dict[str, Any] | None = None,
 ) -> str:
     # Filter out inactive hosts and their endpoints
     active_hosts = [h for h in hosts if 200 <= getattr(h, "status_code", 0) < 400]
@@ -353,6 +363,8 @@ def _render_html(
     advisories    = [f for f in non_stealth if f["tool"] in _ADVISORY_TOOLS]
     cold_findings = [f for f in non_stealth if f["severity"] not in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
     counts_hot = {s: sum(1 for f in hot_findings if f["severity"] == s) for s in _SEVERITY_ORDER}
+
+    js_config = js_config or {}
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -411,6 +423,35 @@ def _render_html(
     </section>
 
     <!-- ── Hot Findings (Critical / High / Medium) ────────────────────────── -->
+    <!-- â”€â”€ JS Deep Inspection Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
+    <section>
+      <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs">JS Deep Inspection Config</h2>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 text-sm text-gray-300">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <div class="text-xs text-gray-500">Workers</div>
+            <div class="font-mono text-emerald-400">{_e(js_config.get("js_max_workers", ""))}</div>
+          </div>
+          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <div class="text-xs text-gray-500">LLM Concurrency</div>
+            <div class="font-mono text-emerald-400">{_e(js_config.get("js_llm_concurrency", ""))}</div>
+          </div>
+          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <div class="text-xs text-gray-500">Snippet Max Len</div>
+            <div class="font-mono text-emerald-400">{_e(js_config.get("js_snippet_max_len", ""))}</div>
+          </div>
+          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <div class="text-xs text-gray-500">HTTP Timeout (s)</div>
+            <div class="font-mono text-emerald-400">{_e(js_config.get("js_http_timeout", ""))}</div>
+          </div>
+          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <div class="text-xs text-gray-500">LLM Timeout (s)</div>
+            <div class="font-mono text-emerald-400">{_e(js_config.get("js_llm_timeout", ""))}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="hot-findings">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-lg font-semibold text-gray-300 uppercase tracking-widest text-xs border-b border-gray-800 pb-2 flex-1">

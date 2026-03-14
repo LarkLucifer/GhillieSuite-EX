@@ -136,6 +136,36 @@ def hunt(
         is_flag=True,
         rich_help_panel="Automation",
     ),
+    js_workers: Optional[int] = typer.Option(
+        None,
+        "--js-workers",
+        help="JS Deep Inspection: max concurrent JS downloads/workers.",
+        show_default=False,
+    ),
+    llm_concurrency: Optional[int] = typer.Option(
+        None,
+        "--llm-concurrency",
+        help="JS Deep Inspection: max concurrent LLM verification calls.",
+        show_default=False,
+    ),
+    js_snippet_len: Optional[int] = typer.Option(
+        None,
+        "--js-snippet-len",
+        help="JS Deep Inspection: max snippet length sent to LLM.",
+        show_default=False,
+    ),
+    js_http_timeout: Optional[float] = typer.Option(
+        None,
+        "--js-http-timeout",
+        help="JS Deep Inspection: per-file download timeout (seconds).",
+        show_default=False,
+    ),
+    js_llm_timeout: Optional[float] = typer.Option(
+        None,
+        "--js-llm-timeout",
+        help="JS Deep Inspection: LLM verification timeout (seconds).",
+        show_default=False,
+    ),
 ) -> None:
     """
     Launch a full AI-driven bug bounty hunt against TARGET.
@@ -166,6 +196,11 @@ def hunt(
         cookie=cookie,
         header=header,
         force_auto=force_auto,
+        js_workers=js_workers,
+        llm_concurrency=llm_concurrency,
+        js_snippet_len=js_snippet_len,
+        js_http_timeout=js_http_timeout,
+        js_llm_timeout=js_llm_timeout,
     )
 
     try:
@@ -191,6 +226,11 @@ async def _async_hunt(
     cookie: str | None,
     header: str | None,
     force_auto: bool = False,
+    js_workers: int | None = None,
+    llm_concurrency: int | None = None,
+    js_snippet_len: int | None = None,
+    js_http_timeout: float | None = None,
+    js_llm_timeout: float | None = None,
 ) -> None:
     """Async implementation of the hunt command."""
     from ghilliesuite_ex.config import cfg, validate_config
@@ -234,6 +274,26 @@ async def _async_hunt(
             "[bold yellow]Sniper protocol disabled[/bold yellow]  "
             "[dim]— WAF signals will not reduce execution[/dim]"
         )
+
+    if js_workers is not None:
+        cfg.js_max_workers = js_workers
+    if llm_concurrency is not None:
+        cfg.js_llm_concurrency = llm_concurrency
+    if js_snippet_len is not None:
+        cfg.js_snippet_max_len = js_snippet_len
+    if js_http_timeout is not None:
+        cfg.js_http_timeout = js_http_timeout
+    if js_llm_timeout is not None:
+        cfg.js_llm_timeout = js_llm_timeout
+
+    console.print(
+        "[bold cyan]JS Deep Inspection config:[/bold cyan] "
+        f"workers={cfg.js_max_workers}, "
+        f"llm_concurrency={cfg.js_llm_concurrency}, "
+        f"snippet_max_len={cfg.js_snippet_max_len}, "
+        f"http_timeout={cfg.js_http_timeout}s, "
+        f"llm_timeout={cfg.js_llm_timeout}s"
+    )
 
     if cfg.is_authenticated:
         console.print(
