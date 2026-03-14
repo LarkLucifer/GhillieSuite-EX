@@ -125,6 +125,23 @@ class Config:
         default_factory=lambda: int(os.getenv("DEFAULT_TIMEOUT", "180"))
     )
 
+    # â”€â”€ JS Deep Inspection limits
+    js_max_workers: int = field(
+        default_factory=lambda: int(os.getenv("JS_MAX_WORKERS", "8"))
+    )
+    js_llm_concurrency: int = field(
+        default_factory=lambda: int(os.getenv("JS_LLM_CONCURRENCY", "2"))
+    )
+    js_snippet_max_len: int = field(
+        default_factory=lambda: int(os.getenv("JS_SNIPPET_MAX_LEN", "500"))
+    )
+    js_http_timeout: float = field(
+        default_factory=lambda: float(os.getenv("JS_HTTP_TIMEOUT", "10"))
+    )
+    js_llm_timeout: float = field(
+        default_factory=lambda: float(os.getenv("JS_LLM_TIMEOUT", "8"))
+    )
+
     # ── SQLite state DB path
     # Hardcoded to a stable home-directory path so the DB is always found
     # regardless of CWD, enabling 100% reliable 4-day unattended runs.
