@@ -89,6 +89,15 @@ def is_high_value_url(url: str) -> bool:
     if any(cdn in url_lower for cdn in _CDN_BLACKLIST):
         return False
 
+    # Rule 0: Keep JS assets for secret/sink analysis (even without params)
+    try:
+        import urllib.parse
+        if urllib.parse.urlparse(url).path.lower().endswith(".js"):
+            return True
+    except Exception:
+        if url_lower.endswith(".js") or ".js?" in url_lower:
+            return True
+
     # Rule 1: has parameters
     if "?" in url:
         return True
