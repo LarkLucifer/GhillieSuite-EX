@@ -98,6 +98,7 @@ class HtmlReporter:
 
         js_config = {
             "js_max_workers": self.cfg.js_max_workers,
+            "js_max_files": self.cfg.js_max_files,
             "js_llm_concurrency": self.cfg.js_llm_concurrency,
             "js_snippet_max_len": self.cfg.js_snippet_max_len,
             "js_http_timeout": self.cfg.js_http_timeout,
@@ -431,6 +432,10 @@ def _render_html(
           <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
             <div class="text-xs text-gray-500">Workers</div>
             <div class="font-mono text-emerald-400">{_e(js_config.get("js_max_workers", ""))}</div>
+          </div>
+          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <div class="text-xs text-gray-500">Max Files</div>
+            <div class="font-mono text-emerald-400">{_e(js_config.get("js_max_files", ""))}</div>
           </div>
           <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
             <div class="text-xs text-gray-500">LLM Concurrency</div>
