@@ -124,10 +124,19 @@ class Config:
     default_timeout: int = field(
         default_factory=lambda: int(os.getenv("DEFAULT_TIMEOUT", "180"))
     )
+    nuclei_timeout: int = field(
+        default_factory=lambda: int(os.getenv("NUCLEI_TIMEOUT", "600"))
+    )
+    fast_nuclei: bool = field(
+        default_factory=lambda: os.getenv("FAST_NUCLEI", "0").strip() in ("1", "true", "yes", "on")
+    )
 
     # â”€â”€ JS Deep Inspection limits
     js_max_workers: int = field(
         default_factory=lambda: int(os.getenv("JS_MAX_WORKERS", "8"))
+    )
+    js_max_files: int = field(
+        default_factory=lambda: int(os.getenv("JS_MAX_FILES", "300"))
     )
     js_llm_concurrency: int = field(
         default_factory=lambda: int(os.getenv("JS_LLM_CONCURRENCY", "2"))

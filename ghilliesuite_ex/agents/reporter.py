@@ -72,6 +72,7 @@ class ReporterAgent(BaseAgent):
             "scan_config": {
                 "js_deep_inspection": {
                     "js_max_workers": self.cfg.js_max_workers,
+                    "js_max_files": self.cfg.js_max_files,
                     "js_llm_concurrency": self.cfg.js_llm_concurrency,
                     "js_snippet_max_len": self.cfg.js_snippet_max_len,
                     "js_http_timeout": self.cfg.js_http_timeout,
@@ -128,6 +129,7 @@ class ReporterAgent(BaseAgent):
             f"| Setting | Value |",
             f"|---------|-------|",
             f"| `js_max_workers` | {self.cfg.js_max_workers} |",
+            f"| `js_max_files` | {self.cfg.js_max_files} |",
             f"| `js_llm_concurrency` | {self.cfg.js_llm_concurrency} |",
             f"| `js_snippet_max_len` | {self.cfg.js_snippet_max_len} |",
             f"| `js_http_timeout` | {self.cfg.js_http_timeout} |",

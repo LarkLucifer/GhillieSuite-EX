@@ -82,6 +82,18 @@ def hunt(
         "--timeout",
         help="Per-tool execution timeout in seconds.",
     ),
+    nuclei_timeout: Optional[int] = typer.Option(
+        None,
+        "--nuclei-timeout",
+        help="Nuclei-only execution timeout in seconds.",
+        show_default=False,
+    ),
+    fast_nuclei: Optional[bool] = typer.Option(
+        None,
+        "--fast-nuclei/--no-fast-nuclei",
+        help="Enable aggressive Nuclei speed + severity filtering flags.",
+        show_default=False,
+    ),
     safe_mode: bool = typer.Option(
         False,
         "--safe-mode",
@@ -142,6 +154,12 @@ def hunt(
         help="JS Deep Inspection: max concurrent JS downloads/workers.",
         show_default=False,
     ),
+    js_max_files: Optional[int] = typer.Option(
+        None,
+        "--js-max-files",
+        help="JS Deep Inspection: max JS files to analyze.",
+        show_default=False,
+    ),
     llm_concurrency: Optional[int] = typer.Option(
         None,
         "--llm-concurrency",
@@ -189,6 +207,8 @@ def hunt(
         output_dir=output,
         max_loops=max_loops,
         timeout=timeout,
+        nuclei_timeout=nuclei_timeout,
+        fast_nuclei=fast_nuclei,
         safe_mode=safe_mode,
         update_templates=update_templates,
         stealth=stealth,
@@ -197,6 +217,7 @@ def hunt(
         header=header,
         force_auto=force_auto,
         js_workers=js_workers,
+        js_max_files=js_max_files,
         llm_concurrency=llm_concurrency,
         js_snippet_len=js_snippet_len,
         js_http_timeout=js_http_timeout,
@@ -219,6 +240,8 @@ async def _async_hunt(
     output_dir: str,
     max_loops: int,
     timeout: int,
+    nuclei_timeout: int | None,
+    fast_nuclei: bool | None,
     safe_mode: bool,
     update_templates: bool,
     stealth: bool,
@@ -227,6 +250,7 @@ async def _async_hunt(
     header: str | None,
     force_auto: bool = False,
     js_workers: int | None = None,
+    js_max_files: int | None = None,
     llm_concurrency: int | None = None,
     js_snippet_len: int | None = None,
     js_http_timeout: float | None = None,
@@ -275,8 +299,16 @@ async def _async_hunt(
             "[dim]— WAF signals will not reduce execution[/dim]"
         )
 
+    if nuclei_timeout is not None:
+        cfg.nuclei_timeout = nuclei_timeout
+
+    if fast_nuclei is not None:
+        cfg.fast_nuclei = bool(fast_nuclei)
+
     if js_workers is not None:
         cfg.js_max_workers = js_workers
+    if js_max_files is not None:
+        cfg.js_max_files = js_max_files
     if llm_concurrency is not None:
         cfg.js_llm_concurrency = llm_concurrency
     if js_snippet_len is not None:
@@ -289,6 +321,7 @@ async def _async_hunt(
     console.print(
         "[bold cyan]JS Deep Inspection config:[/bold cyan] "
         f"workers={cfg.js_max_workers}, "
+        f"max_files={cfg.js_max_files}, "
         f"llm_concurrency={cfg.js_llm_concurrency}, "
         f"snippet_max_len={cfg.js_snippet_max_len}, "
         f"http_timeout={cfg.js_http_timeout}s, "
