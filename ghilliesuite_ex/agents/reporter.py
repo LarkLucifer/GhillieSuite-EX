@@ -116,9 +116,13 @@ class ReporterAgent(BaseAgent):
             f"",
         ]
 
-        # Group by severity
+        # Split stealth probes from standard findings
+        stealth_findings = [f for f in findings if f.tool == "stealth_payload"]
+        standard_findings = [f for f in findings if f.tool != "stealth_payload"]
+
+        # Group by severity (standard findings only)
         by_severity: dict[str, list[Finding]] = {s: [] for s in SEVERITY_ORDER}
-        for f in findings:
+        for f in standard_findings:
             bucket = f.severity.lower()
             by_severity.setdefault(bucket, []).append(f)
 
@@ -132,6 +136,43 @@ class ReporterAgent(BaseAgent):
                 "",
             ]
             for i, f in enumerate(bucket, start=1):
+                md_lines += [
+                    f"### {i}. {f.title}",
+                    f"",
+                    f"| Field | Value |",
+                    f"|-------|-------|",
+                    f"| **Tool** | `{f.tool}` |",
+                    f"| **Target** | `{f.target}` |",
+                    f"| **Severity** | **{f.severity.upper()}** |",
+                    f"| **Timestamp** | {f.timestamp} |",
+                    f"",
+                    f"**Evidence:**",
+                    f"```",
+                    f.evidence or "N/A",
+                    f"```",
+                    f"",
+                    f"**Reproducible Steps:**",
+                    f"",
+                    f.reproducible_steps or "N/A",
+                    f"",
+                    f"**Raw Output (excerpt):**",
+                    f"```",
+                    f.raw_output[:500] if f.raw_output else "N/A",
+                    f"```",
+                    f"",
+                    f"---",
+                    f"",
+                ] 
+
+        # Stealth probes section (separate from standard findings)
+        if stealth_findings:
+            md_lines += [
+                f"## AI Stealth Probes & WAF Bypasses ({len(stealth_findings)})",
+                "",
+                "Targeted low-noise probes executed via Python requests. Includes WAF bypass attempts and response evidence.",
+                "",
+            ]
+            for i, f in enumerate(stealth_findings, start=1):
                 md_lines += [
                     f"### {i}. {f.title}",
                     f"",
