@@ -539,6 +539,8 @@ def parse_dnsx(output: str = "", output_path: Path | None = None) -> list[dict[s
                 data = json.loads(line)
                 domain = data.get("host") or data.get("domain") or data.get("name") or ""
                 ip = data.get("ip") or data.get("a") or data.get("address") or ""
+                if isinstance(ip, (list, tuple)):
+                    ip = ",".join(str(x) for x in ip if x)
                 if domain and ip:
                     results.append({"domain": domain, "ip": ip})
                 continue
