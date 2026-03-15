@@ -184,6 +184,22 @@ class Config:
     enable_screenshots: bool = False
     """If True, enable gowitness screenshots during recon."""
 
+    # AI request resilience
+    ai_timeout: float = field(
+        default_factory=lambda: float(os.getenv("AI_TIMEOUT", "60"))
+    )
+    """Timeout (seconds) for AI calls, including Commander planning."""
+
+    ai_retries: int = field(
+        default_factory=lambda: int(os.getenv("AI_RETRIES", "3"))
+    )
+    """Retry attempts for AI calls before failing."""
+
+    ai_retry_backoff: float = field(
+        default_factory=lambda: float(os.getenv("AI_RETRY_BACKOFF", "1.5"))
+    )
+    """Backoff multiplier (seconds) between AI retries."""
+
     # Report and evidence paths — set at runtime by CLI
     output_dir: str = "reports"
     """Directory where JSON/MD/HTML reports are written."""

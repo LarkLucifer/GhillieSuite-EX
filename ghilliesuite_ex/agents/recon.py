@@ -20,6 +20,7 @@ commands so authenticated endpoints are probed correctly.
 from __future__ import annotations
 
 import asyncio
+import random
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -56,6 +57,14 @@ _HTTPX_OUT        = _TMP_DIR / "httpx_out.json"
 _ARJUN_IN         = _TMP_DIR / "arjun_in.txt"
 _ARJUN_OUT        = _TMP_DIR / "arjun_out.json"
 
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+]
+
 
 def _headers_from_flags(flags: list[str]) -> dict[str, str]:
     """Convert ['-H', 'Header: value', ...] into a headers dict."""
@@ -84,9 +93,11 @@ async def _probe_url(
     """Probe a URL for liveness and return basic metadata."""
     async with sem:
         try:
-            resp = await client.get(url)
-        except Exception:
-            return None
+            req_headers = dict(client.headers)
+            req_headers["User-Agent"] = random.choice(_USER_AGENTS)
+            resp = await client.get(url, headers=req_headers)
+        except Exception as exc:
+            return {"url": url, "error": str(exc)}
         server = resp.headers.get("server", "") or ""
         powered = resp.headers.get("x-powered-by", "") or ""
         tech_parts = []
@@ -246,7 +257,9 @@ class ReconAgent(BaseAgent):
                 scheme = "https" if svc.port in (443, 8443) else "http"
                 httpx_targets.append(f"{scheme}://{h.domain}:{svc.port}")
         else:
-            httpx_targets = subdomains[:]
+            for domain in subdomains:
+                httpx_targets.append(f"http://{domain}")
+                httpx_targets.append(f"https://{domain}")
 
         httpx_targets = filter_in_scope(httpx_targets, self.scope)
         httpx_delta = [t for t in httpx_targets if t not in httpx_history]
@@ -264,8 +277,17 @@ class ReconAgent(BaseAgent):
                 with Status("[cyan]httpx probing (python)...[/cyan]", console=self.console):
                     results = await asyncio.gather(*tasks, return_exceptions=True)
 
+            probe_errors = 0
+            max_probe_errors = 20
             for item in results:
                 if not item or isinstance(item, Exception):
+                    continue
+                if isinstance(item, dict) and item.get("error"):
+                    if probe_errors < max_probe_errors:
+                        self.console.print(
+                            f"[dim]httpx probe failed: {item.get('url','')} — {str(item.get('error'))[:160]}[/dim]"
+                        )
+                    probe_errors += 1
                     continue
                 url = str(item.get("url") or "")
                 if not url or not is_in_scope(url, self.scope):

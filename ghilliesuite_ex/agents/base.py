@@ -16,6 +16,7 @@ Agents communicate through the DB — they never pass raw strings to each other.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import asyncio
 from dataclasses import dataclass, field
 
 from rich.console import Console
@@ -82,28 +83,45 @@ class BaseAgent(ABC):
         Handles both Gemini (google-generativeai) and a minimal OpenAI shim.
         Returns an empty string on failure (caller must handle gracefully).
         """
-        try:
-            # Gemini path
-            if hasattr(self.ai, "generate_content"):
-                full_prompt = f"{system}\n\n{prompt}" if system else prompt
-                response = await _run_in_thread(self.ai.generate_content, full_prompt)
-                return response.text or ""
+        retries = int(getattr(self.cfg, "ai_retries", 3) or 3)
+        timeout = float(getattr(self.cfg, "ai_timeout", 60.0) or 60.0)
+        backoff = float(getattr(self.cfg, "ai_retry_backoff", 1.5) or 1.5)
+        last_exc: Exception | None = None
 
-            # OpenAI-compatible path (AsyncOpenAI)
-            if hasattr(self.ai, "chat"):
-                messages = []
-                if system:
-                    messages.append({"role": "system", "content": system})
-                messages.append({"role": "user", "content": prompt})
-                response = await self.ai.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=messages,
-                    temperature=0.2,
-                )
-                return response.choices[0].message.content or ""
+        for attempt in range(1, retries + 1):
+            try:
+                # Gemini path
+                if hasattr(self.ai, "generate_content"):
+                    full_prompt = f"{system}\n\n{prompt}" if system else prompt
+                    response = await asyncio.wait_for(
+                        _run_in_thread(self.ai.generate_content, full_prompt),
+                        timeout=timeout,
+                    )
+                    return response.text or ""
 
-        except Exception as exc:
-            self.console.print(f"[red]AI error in {self.name}: {exc}[/red]")
+                # OpenAI-compatible path (AsyncOpenAI)
+                if hasattr(self.ai, "chat"):
+                    messages = []
+                    if system:
+                        messages.append({"role": "system", "content": system})
+                    messages.append({"role": "user", "content": prompt})
+                    response = await self.ai.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=messages,
+                        temperature=0.2,
+                        timeout=timeout,
+                    )
+                    return response.choices[0].message.content or ""
+
+            except Exception as exc:
+                last_exc = exc
+                if attempt < retries:
+                    self.console.print(
+                        f"[dim]AI call failed in {self.name} (attempt {attempt}/{retries}): {exc}[/dim]"
+                    )
+                    await asyncio.sleep(backoff * attempt)
+                else:
+                    self.console.print(f"[red]AI error in {self.name}: {exc}[/red]")
 
         return ""
 
