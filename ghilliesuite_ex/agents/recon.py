@@ -107,8 +107,7 @@ class ReconAgent(BaseAgent):
 
         # Phase 2: dnsx
         self.console.print(f"[cyan]  Phase 2 - dnsx resolving {len(subdomains)} host(s)[/cyan]")
-        _DNSX_IN.write_text("
-".join(subdomains), encoding="utf-8")
+        _DNSX_IN.write_text("\n".join(subdomains), encoding="utf-8")
         dnsx_cmd = build_command("dnsx", target, input_file=_DNSX_IN, output_file=_DNSX_OUT)
         with Status("[cyan]Running dnsx...[/cyan]", console=self.console):
             dnsx_result = await run_tool_to_file(dnsx_cmd, _DNSX_OUT, timeout=timeout)
@@ -129,8 +128,7 @@ class ReconAgent(BaseAgent):
 
         # Phase 3: naabu
         self.console.print(f"[cyan]  Phase 3 - naabu scanning ports on {len(subdomains)} host(s)[/cyan]")
-        _NAABU_IN.write_text("
-".join(subdomains), encoding="utf-8")
+        _NAABU_IN.write_text("\n".join(subdomains), encoding="utf-8")
         naabu_cmd = build_command("naabu", target, input_file=_NAABU_IN, output_file=_NAABU_OUT)
         with Status("[cyan]Running naabu...[/cyan]", console=self.console):
             naabu_result = await run_tool_to_file(naabu_cmd, _NAABU_OUT, timeout=timeout)
@@ -182,8 +180,7 @@ class ReconAgent(BaseAgent):
         else:
             httpx_targets = subdomains[:]
 
-        _HTTPX_IN.write_text("
-".join(httpx_targets), encoding="utf-8")
+        _HTTPX_IN.write_text("\n".join(httpx_targets), encoding="utf-8")
         httpx_cmd = build_command(
             "httpx", target,
             input_file=_HTTPX_IN,
@@ -232,8 +229,7 @@ class ReconAgent(BaseAgent):
             self.console.print(f"[cyan]  Optional - gowitness screenshots ({len(live_urls)} URL(s))[/cyan]")
             go_in = _TMP_DIR / "gowitness_in.txt"
             go_out = _TMP_DIR / "gowitness_out.json"
-            go_in.write_text("
-".join(live_urls[:100]), encoding="utf-8")
+            go_in.write_text("\n".join(live_urls[:100]), encoding="utf-8")
             gow_cmd = build_command("gowitness", target, input_file=go_in, output_file=go_out)
             with Status("[cyan]Running gowitness...[/cyan]", console=self.console):
                 gow_result = await run_tool_to_file(gow_cmd, go_out, timeout=timeout)
@@ -313,8 +309,7 @@ class ReconAgent(BaseAgent):
         arjun_targets = [e.url for e in endpoints if e.url][:50]
         arjun_urls_added = 0
         if arjun_targets:
-            _ARJUN_IN.write_text("
-".join(arjun_targets), encoding="utf-8")
+            _ARJUN_IN.write_text("\n".join(arjun_targets), encoding="utf-8")
             arjun_cmd = build_command("arjun", target, input_file=_ARJUN_IN, output_file=_ARJUN_OUT)
             with Status("[cyan]Running arjun...[/cyan]", console=self.console):
                 arjun_result = await run_tool_to_file(arjun_cmd, _ARJUN_OUT, timeout=timeout)
