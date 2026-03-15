@@ -52,7 +52,7 @@ cp .env.example .env
 | subfinder | `go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
 | dnsx | `go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest` |
 | naabu | `go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` |
-| httpx | `go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest` |
+| httpx (optional) | `go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest` |
 | katana | `go install github.com/projectdiscovery/katana/cmd/katana@latest` |
 | gau | `go install github.com/lc/gau/v2/cmd/gau@latest` |
 | arjun | `pip install arjun` |
@@ -98,6 +98,7 @@ Options:
   --target / -t         Primary domain to hunt                [required]
   --scope / -s          Scope: comma-sep domains or .txt file [required]
   --output / -o         Report output directory               [default: reports/]
+  --evidence-dir        Evidence output directory             [default: evidence/]
   --max-loops           Max agent decision loops              [default: 15]
   --timeout             Per-tool timeout (seconds)            [default: 180]
   --safe-mode           HitL on ALL tools                     [flag]
@@ -230,8 +231,10 @@ If both are set, **OpenAI takes priority**.
 
 Saved to `reports/` after each hunt:
 
-- `<target>_<timestamp>.html` — polished, automated Tailwind CSS dashboard with AI-generated plain-English translations. Features **Visual Evidence** (Base64 target browser screenshots) and **Dynamic Severity** (auto-promotion of BOLA/GraphQL hits to `CRITICAL` with a glowing red `VERIFIED` badge).
-- `<target>_<timestamp>.json` — machine-readable, all findings, hosts, endpoints.
+- `<target>_<timestamp>.html` ? polished, automated Tailwind CSS dashboard with AI-generated plain-English translations. Features **Visual Evidence** (embedded screenshots when `--screenshots` is enabled), request/response evidence excerpts, and **Dynamic Severity** (auto-promotion of BOLA/GraphQL hits to `CRITICAL` with a glowing red `VERIFIED` badge).
+- `<target>_<timestamp>.json` ? machine-readable, all findings, hosts, endpoints.
+
+Evidence files (request/response captures) are saved to `evidence/` by default or the directory specified by `--evidence-dir`.
 
 ---
 

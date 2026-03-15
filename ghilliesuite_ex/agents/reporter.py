@@ -31,6 +31,18 @@ from .base import AgentResult, AgentTask, BaseAgent
 SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"]
 
 
+def _extract_evidence_paths(text: str) -> tuple[str, str]:
+    """Extract evidence request/response file paths from a finding's evidence text."""
+    req_path = ""
+    res_path = ""
+    for line in (text or "").splitlines():
+        if "Request:" in line:
+            req_path = line.split("Request:", 1)[-1].strip()
+        if "Response:" in line:
+            res_path = line.split("Response:", 1)[-1].strip()
+    return req_path, res_path
+
+
 class ReporterAgent(BaseAgent):
     """Compiles all DB findings into a JSON + Markdown report."""
 
@@ -39,6 +51,7 @@ class ReporterAgent(BaseAgent):
         findings = await self.db.get_findings()
         hosts = await self.db.get_hosts()
         endpoints = await self.db.get_endpoints()
+        screenshots = await self.db.get_screenshots()
 
         # ── Terminal tables ────────────────────────────────────────────────
         if not findings:
@@ -57,6 +70,8 @@ class ReporterAgent(BaseAgent):
 
         # ── Resolve output dir ─────────────────────────────────────────────
         output_dir = Path("reports")
+        if getattr(self.cfg, "output_dir", None):
+            output_dir = Path(self.cfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -95,12 +110,18 @@ class ReporterAgent(BaseAgent):
                     "reproducible_steps": f.reproducible_steps,
                     "raw_output_excerpt": f.raw_output[:500],
                     "timestamp": f.timestamp,
+                    "evidence_request_path": _extract_evidence_paths(f.evidence)[0],
+                    "evidence_response_path": _extract_evidence_paths(f.evidence)[1],
                 }
                 for f in findings
             ],
             "hosts": [
                 {"domain": h.domain, "status_code": h.status_code, "tech_stack": h.tech_stack}
                 for h in hosts
+            ],
+            "screenshots": [
+                {"url": s.url, "path": s.path, "title": s.title, "status": s.status}
+                for s in screenshots
             ],
         }
         json_path.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
@@ -157,6 +178,7 @@ class ReporterAgent(BaseAgent):
                 "",
             ]
             for i, f in enumerate(bucket, start=1):
+                req_path, res_path = _extract_evidence_paths(f.evidence)
                 md_lines += [
                     f"### {i}. {f.title}",
                     f"",
@@ -171,6 +193,8 @@ class ReporterAgent(BaseAgent):
                     f"```",
                     f.evidence or "N/A",
                     f"```",
+                    f"Evidence Request: `{req_path}`" if req_path else "",
+                    f"Evidence Response: `{res_path}`" if res_path else "",
                     f"",
                     f"**Reproducible Steps:**",
                     f"",
@@ -194,6 +218,7 @@ class ReporterAgent(BaseAgent):
                 "",
             ]
             for i, f in enumerate(stealth_findings, start=1):
+                req_path, res_path = _extract_evidence_paths(f.evidence)
                 md_lines += [
                     f"### {i}. {f.title}",
                     f"",
@@ -208,6 +233,8 @@ class ReporterAgent(BaseAgent):
                     f"```",
                     f.evidence or "N/A",
                     f"```",
+                    f"Evidence Request: `{req_path}`" if req_path else "",
+                    f"Evidence Response: `{res_path}`" if res_path else "",
                     f"",
                     f"**Reproducible Steps:**",
                     f"",
@@ -232,6 +259,18 @@ class ReporterAgent(BaseAgent):
             ]
             for h in hosts:
                 md_lines.append(f"| `{h.domain}` | {h.status_code} | {h.tech_stack} |")
+            md_lines.append("")
+
+        # Screenshots appendix
+        if screenshots:
+            md_lines += [
+                f"## Appendix â€” Screenshots",
+                f"",
+                f"| URL | Screenshot Path | Status |",
+                f"|-----|------------------|--------|",
+            ]
+            for s in screenshots:
+                md_lines.append(f"| `{s.url}` | `{s.path}` | {s.status} |")
             md_lines.append("")
 
         md_path.write_text("\n".join(md_lines), encoding="utf-8")

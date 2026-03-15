@@ -25,7 +25,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from .models import CVEResult, Endpoint, Finding, Host, Service
+from .models import CVEResult, Endpoint, Finding, Host, Service, Screenshot
 
 # ── DDL ───────────────────────────────────────────────────────────────────────
 SCHEMA_SQL = """
@@ -65,6 +65,17 @@ CREATE TABLE IF NOT EXISTS endpoints (
     found_at    TEXT    NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS screenshots (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    url          TEXT    NOT NULL,
+    path         TEXT    NOT NULL,
+    title        TEXT    DEFAULT '',
+    status       INTEGER DEFAULT 0,
+    source_tool  TEXT    DEFAULT '',
+    captured_at  TEXT    NOT NULL,
+    UNIQUE(url, path)
+);
+
 CREATE TABLE IF NOT EXISTS findings (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     tool              TEXT NOT NULL,
@@ -90,7 +101,7 @@ CREATE TABLE IF NOT EXISTS cve_cache (
 """
 
 # Tables that hold per-target scan data — wiped when target changes
-_DATA_TABLES = ["findings", "endpoints", "services", "hosts", "cve_cache"]
+_DATA_TABLES = ["findings", "endpoints", "services", "screenshots", "hosts", "cve_cache"]
 
 
 class StateDB:
@@ -344,6 +355,43 @@ class StateDB:
                 source_tool=r["source_tool"],
                 host_id=r["host_id"],
                 found_at=r["found_at"],
+            )
+            for r in rows
+        ]
+
+    # -------- Screenshots --------
+
+    async def insert_screenshot(self, shot: Screenshot) -> int:
+        """Insert or ignore a screenshot record. Returns the row id."""
+        cursor = await self._db.execute(
+            """
+            INSERT OR IGNORE INTO screenshots
+              (url, path, title, status, source_tool, captured_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                shot.url,
+                shot.path,
+                shot.title,
+                shot.status,
+                shot.source_tool,
+                shot.captured_at,
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0  # type: ignore[return-value]
+
+    async def get_screenshots(self) -> list[Screenshot]:
+        rows = await (await self._db.execute("SELECT * FROM screenshots")).fetchall()
+        return [
+            Screenshot(
+                id=r["id"],
+                url=r["url"],
+                path=r["path"],
+                title=r["title"],
+                status=r["status"],
+                source_tool=r["source_tool"],
+                captured_at=r["captured_at"],
             )
             for r in rows
         ]

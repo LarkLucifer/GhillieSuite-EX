@@ -21,25 +21,28 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from rich.status import Status
 
 from ghilliesuite_ex.arsenal import TOOL_REGISTRY, build_command
 from ghilliesuite_ex.config import cfg as global_cfg
-from ghilliesuite_ex.state.models import Endpoint, Host, Service
+from ghilliesuite_ex.state.models import Endpoint, Host, Service, Screenshot
 from ghilliesuite_ex.utils.executor import run_tool, run_tool_to_file
 from ghilliesuite_ex.utils.parsers import (
     get_parser,
     parse_subfinder,
-    parse_httpx,
     parse_dnsx,
     parse_naabu,
     parse_arjun,
+    parse_gowitness,
 )
 from ghilliesuite_ex.utils.scope import is_in_scope, scope_filter_domains, scope_filter_urls, filter_in_scope
 from ghilliesuite_ex.utils.ui import tool_result_panel
 
 from .base import AgentResult, AgentTask, BaseAgent
+
+import httpx
 
 # ── Temp file locations for inter-tool data handoff ───────────────────────────
 _TMP_DIR          = Path("tmp")
@@ -52,6 +55,51 @@ _HTTPX_IN         = _TMP_DIR / "httpx_in.txt"
 _HTTPX_OUT        = _TMP_DIR / "httpx_out.json"
 _ARJUN_IN         = _TMP_DIR / "arjun_in.txt"
 _ARJUN_OUT        = _TMP_DIR / "arjun_out.json"
+
+
+def _headers_from_flags(flags: list[str]) -> dict[str, str]:
+    """Convert ['-H', 'Header: value', ...] into a headers dict."""
+    headers: dict[str, str] = {}
+    if not flags:
+        return headers
+    it = iter(flags)
+    for tok in it:
+        if tok != "-H":
+            continue
+        try:
+            hv = next(it)
+        except StopIteration:
+            break
+        if ":" in hv:
+            key, val = hv.split(":", 1)
+            headers[key.strip()] = val.strip()
+    return headers
+
+
+async def _probe_url(
+    client: httpx.AsyncClient,
+    url: str,
+    sem: asyncio.Semaphore,
+) -> dict[str, str | int] | None:
+    """Probe a URL for liveness and return basic metadata."""
+    async with sem:
+        try:
+            resp = await client.get(url)
+        except Exception:
+            return None
+        server = resp.headers.get("server", "") or ""
+        powered = resp.headers.get("x-powered-by", "") or ""
+        tech_parts = []
+        if server:
+            tech_parts.append(server)
+        if powered and powered not in tech_parts:
+            tech_parts.append(powered)
+        return {
+            "url": str(resp.url),
+            "status_code": int(resp.status_code),
+            "server": server,
+            "tech_stack": ",".join(tech_parts),
+        }
 
 
 class ReconAgent(BaseAgent):
@@ -82,6 +130,7 @@ class ReconAgent(BaseAgent):
         run_sf = root_domain not in sf_history
 
         subdomains: list[str] = []
+        new_subdomains: list[str] = []
         sf_result = None
         if run_sf:
             sf_cmd = build_command("subfinder", root_domain, output_file=_SUBFINDER_OUT)
@@ -96,6 +145,7 @@ class ReconAgent(BaseAgent):
             parsed = parse_subfinder(output_path=sf_result.output_file or _SUBFINDER_OUT)
             raw_domains = [r["domain"] for r in parsed]
             subdomains = scope_filter_domains(raw_domains, self.scope)
+            new_subdomains = [d for d in subdomains if d not in dnsx_history]
             for domain in subdomains:
                 await self.db.insert_host(Host(domain=domain))
                 items_added += 1
@@ -113,7 +163,7 @@ class ReconAgent(BaseAgent):
 
         # Phase 2: dnsx (delta-only)
         dnsx_rows: list[dict] = []
-        dnsx_targets = [d for d in subdomains if d not in dnsx_history]
+        dnsx_targets = new_subdomains or [d for d in subdomains if d not in dnsx_history]
         if dnsx_targets:
             self.console.print(f"[cyan]  Phase 2 - dnsx resolving {len(dnsx_targets)} new host(s)[/cyan]")
             _DNSX_IN.write_text("\n".join(dnsx_targets), encoding="utf-8")
@@ -140,7 +190,7 @@ class ReconAgent(BaseAgent):
         # Phase 3: naabu (delta-only)
         service_count = 0
         services: list[Service] = []
-        naabu_seed = [row.get("domain") for row in dnsx_rows if row.get("domain")] or subdomains
+        naabu_seed = [row.get("domain") or row.get("ip") for row in dnsx_rows if (row.get("domain") or row.get("ip"))]
         naabu_targets = [h for h in naabu_seed if h not in naabu_history]
         if naabu_targets:
             self.console.print(f"[cyan]  Phase 3 - naabu scanning ports on {len(naabu_targets)} new host(s)[/cyan]")
@@ -182,9 +232,10 @@ class ReconAgent(BaseAgent):
         else:
             self.console.print("[dim]naabu: skipped (no new hosts)[/dim]")
 
-        # Phase 4: httpx (delta-only)
+        # Phase 4: HTTP probing (python httpx, delta-only)
         live_count = 0
         live_urls: list[str] = []
+        new_endpoints: list[str] = []
         httpx_targets: list[str] = []
         if services:
             hosts = {h.id: h for h in await self.db.get_hosts(self.scope)}
@@ -201,46 +252,46 @@ class ReconAgent(BaseAgent):
         httpx_delta = [t for t in httpx_targets if t not in httpx_history]
         if httpx_delta:
             self.console.print("[cyan]  Phase 4 - httpx probing live services[/cyan]")
-            _HTTPX_IN.write_text("\n".join(httpx_delta), encoding="utf-8")
-            httpx_cmd = build_command(
-                "httpx", target,
-                input_file=_HTTPX_IN,
-                output_file=_HTTPX_OUT,
-                auth_headers=auth_headers,
-            )
-            with Status("[cyan]httpx probing...[/cyan]", console=self.console):
-                httpx_result = await run_tool_to_file(httpx_cmd, _HTTPX_OUT, timeout=timeout)
+            headers = _headers_from_flags(auth_headers)
+            sem = asyncio.Semaphore(30)
+            async with httpx.AsyncClient(
+                verify=False,
+                timeout=10.0,
+                follow_redirects=self.cfg.allow_redirects,
+                headers=headers or None,
+            ) as client:
+                tasks = [_probe_url(client, url, sem) for url in httpx_delta]
+                with Status("[cyan]httpx probing (python)...[/cyan]", console=self.console):
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            if httpx_result.ok or httpx_result.output_file:
-                parsed_hosts = parse_httpx(output_path=httpx_result.output_file or _HTTPX_OUT)
-                for item in parsed_hosts:
-                    if not item.get("url") or not is_in_scope(item["url"], self.scope):
-                        continue
-                    host = Host(
-                        domain=item["url"].split("//")[-1].split("/")[0],
-                        status_code=item.get("status_code", 0),
-                        server=item.get("server", ""),
-                        tech_stack=item.get("tech_stack", ""),
-                    )
-                    host_id = await self.db.upsert_host(host)
-                    items_added += 1
-                    live_count += 1
-                    live_urls.append(item["url"])
+            for item in results:
+                if not item or isinstance(item, Exception):
+                    continue
+                url = str(item.get("url") or "")
+                if not url or not is_in_scope(url, self.scope):
+                    continue
+                host = Host(
+                    domain=urlsplit(url).netloc,
+                    status_code=int(item.get("status_code") or 0),
+                    server=str(item.get("server") or ""),
+                    tech_stack=str(item.get("tech_stack") or ""),
+                )
+                host_id = await self.db.upsert_host(host)
+                items_added += 1
+                live_count += 1
+                live_urls.append(url)
+                new_endpoints.append(url)
 
-                    if item.get("ai_detected") and host_id:
-                        try:
-                            await self.db.tag_host(host_id, "ai_detected")
-                        except Exception:
-                            pass
+                if host_id:
+                    ep = Endpoint(url=url, source_tool="httpx", host_id=host_id)
+                    await self.db.insert_endpoint(ep)
 
-                    if host_id:
-                        ep = Endpoint(url=item["url"], source_tool="httpx", host_id=host_id)
-                        await self.db.insert_endpoint(ep)
-                httpx_history.update(httpx_delta)
+            httpx_history.update(httpx_delta)
 
             tool_result_panel(
-                self.console, "httpx", httpx_cmd,
-                httpx_result.ok or bool(httpx_result.output_file),
+                self.console, "httpx",
+                ["python", "async_http_probe"],
+                True,
                 f"Found {live_count} live HTTP service(s)",
             )
         else:
@@ -255,10 +306,39 @@ class ReconAgent(BaseAgent):
             gow_cmd = build_command("gowitness", target, input_file=go_in, output_file=go_out)
             with Status("[cyan]Running gowitness...[/cyan]", console=self.console):
                 gow_result = await run_tool_to_file(gow_cmd, go_out, timeout=timeout)
+            screenshots_added = 0
+            if gow_result.ok or gow_result.output_file:
+                rows = parse_gowitness(output_path=gow_result.output_file or go_out)
+                for row in rows:
+                    url = row.get("url") or ""
+                    shot_path = row.get("screenshot") or ""
+                    title = row.get("title") or ""
+                    status = int(row.get("status") or 0)
+                    if not url or not shot_path:
+                        continue
+                    p = Path(shot_path)
+                    if not p.is_absolute():
+                        # Try resolving relative to gowitness output or cwd
+                        for base in (go_out.parent, Path.cwd()):
+                            candidate = (base / shot_path).resolve()
+                            if candidate.exists():
+                                p = candidate
+                                break
+                    if p.exists():
+                        await self.db.insert_screenshot(
+                            Screenshot(
+                                url=url,
+                                path=str(p),
+                                title=title,
+                                status=status,
+                                source_tool="gowitness",
+                            )
+                        )
+                        screenshots_added += 1
             tool_result_panel(
                 self.console, "gowitness",
                 gow_cmd, gow_result.ok or bool(gow_result.output_file),
-                "Screenshots captured (see gowitness output directory).",
+                f"Screenshots captured: {screenshots_added}",
             )
 
         # Phase 5: katana (delta-only)
@@ -299,6 +379,7 @@ class ReconAgent(BaseAgent):
                                 await self.db.insert_endpoint(ep)
                                 items_added += 1
                                 katana_urls_found += 1
+                                new_endpoints.append(item["url"])
                     else:
                         self.console.print(f"[dim]katana: {katana_result.error[:80]}[/dim]")
                 katana_history.update(katana_delta)
@@ -330,6 +411,7 @@ class ReconAgent(BaseAgent):
                         await self.db.insert_endpoint(ep)
                         items_added += 1
                         gau_urls_added += 1
+                        new_endpoints.append(entry["url"])
                 gau_history.add(root_domain)
             else:
                 self.console.print(f"[dim]gau: {gau_result.error or gau_result.stderr[:100]}[/dim]")
@@ -343,33 +425,46 @@ class ReconAgent(BaseAgent):
 
         # Phase 7: arjun (delta-only)
         arjun_urls_added = 0
-        endpoints = await self.db.get_endpoints(with_params_only=False)
-        arjun_targets = [e.url for e in endpoints if e.url and e.url not in arjun_history][:50]
+        arjun_targets = [u for u in new_endpoints if u and u not in arjun_history][:50]
         if arjun_targets:
             self.console.print("[cyan]  Phase 7 - arjun parameter discovery[/cyan]")
-            _ARJUN_IN.write_text("\n".join(arjun_targets), encoding="utf-8")
+            _ARJUN_IN.write_text("\n".join(arjun_targets) + "\n", encoding="utf-8")
             arjun_cmd = build_command("arjun", target, input_file=_ARJUN_IN, output_file=_ARJUN_OUT)
-            with Status("[cyan]Running arjun...[/cyan]", console=self.console):
+            with Status("[cyan]Running arjun (list mode)...[/cyan]", console=self.console):
                 arjun_result = await run_tool_to_file(arjun_cmd, _ARJUN_OUT, timeout=timeout)
+            parsed_rows: list[dict] = []
             if arjun_result.ok or arjun_result.output_file:
-                parsed = parse_arjun(output_path=arjun_result.output_file or _ARJUN_OUT)
-                for row in parsed:
-                    url = row.get("url") or ""
-                    params = row.get("params") or []
-                    if not url or not params:
-                        continue
-                    if not is_in_scope(url, self.scope):
-                        continue
-                    params_str = ",".join(params)
-                    await self.db.update_endpoint_params(url, params_str)
-                    ep = Endpoint(url=url, params=params_str, source_tool="arjun")
-                    await self.db.insert_endpoint(ep)
-                    items_added += 1
-                    arjun_urls_added += 1
+                parsed_rows = parse_arjun(output_path=arjun_result.output_file or _ARJUN_OUT)
+            else:
+                self.console.print("[dim]arjun list mode failed; falling back to per-URL mode.[/dim]")
+                for idx, url in enumerate(arjun_targets):
+                    per_out = _TMP_DIR / f"arjun_out_{idx}.json"
+                    per_cmd = ["arjun", "-u", url, "-oJ", str(per_out)]
+                    with Status(f"[cyan]Running arjun -> {url}[/cyan]", console=self.console):
+                        per_res = await run_tool_to_file(per_cmd, per_out, timeout=timeout)
+                    if per_res.ok or per_res.output_file:
+                        parsed_rows.extend(parse_arjun(output_path=per_res.output_file or per_out))
+
+            for row in parsed_rows:
+                url = row.get("url") or ""
+                params = row.get("params") or []
+                if not url or not params:
+                    continue
+                if not is_in_scope(url, self.scope):
+                    continue
+                params_str = ",".join(params)
+                await self.db.update_endpoint_params(url, params_str)
+                ep = Endpoint(url=url, params=params_str, source_tool="arjun")
+                await self.db.insert_endpoint(ep)
+                items_added += 1
+                arjun_urls_added += 1
+
+            if parsed_rows:
                 arjun_history.update(arjun_targets)
+            arjun_ok = (arjun_result.ok or bool(arjun_result.output_file) or bool(parsed_rows))
             tool_result_panel(
                 self.console, "arjun",
-                arjun_cmd, arjun_result.ok or bool(arjun_result.output_file),
+                arjun_cmd, arjun_ok,
                 f"Discovered params for {arjun_urls_added} URL(s)",
             )
         else:
