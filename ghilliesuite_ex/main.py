@@ -70,7 +70,12 @@ def hunt(
     output: str = typer.Option(
         "reports",
         "--output", "-o",
-        help="Directory where JSON + Markdown reports are saved.",
+        help="Directory where JSON + Markdown + HTML reports are saved.",
+    ),
+    evidence_dir: str = typer.Option(
+        "evidence",
+        "--evidence-dir",
+        help="Directory where request/response evidence files are saved.",
     ),
     max_loops: int = typer.Option(
         5,
@@ -223,6 +228,7 @@ def hunt(
         target=target,
         scope_input=scope,
         output_dir=output,
+        evidence_dir=evidence_dir,
         max_loops=max_loops,
         timeout=timeout,
         nuclei_timeout=nuclei_timeout,
@@ -259,6 +265,7 @@ async def _async_hunt(
     target: str,
     scope_input: str,
     output_dir: str,
+    evidence_dir: str,
     max_loops: int,
     timeout: int,
     nuclei_timeout: int | None,
@@ -308,6 +315,8 @@ async def _async_hunt(
 
     cfg.enable_screenshots = bool(screenshots)
     cfg.ai_planner = bool(ai_planner)
+    cfg.output_dir = output_dir
+    cfg.evidence_dir = evidence_dir
 
     if allow_redirects:
         cfg.allow_redirects = True
@@ -404,7 +413,7 @@ async def _async_hunt(
     # ── Binary availability check ──────────────────────────────────────────
     console.print()
     results = check_binaries(console)
-    missing = [name for name in ("subfinder", "httpx", "katana") if not results.get(name)]
+    missing = [name for name in ("subfinder", "katana") if not results.get(name)]
     if missing:
         console.print(
             f"\n[bold red]Missing required recon tools:[/bold red] {', '.join(missing)}\n"

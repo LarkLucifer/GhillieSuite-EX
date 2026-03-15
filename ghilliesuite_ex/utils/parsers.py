@@ -632,6 +632,30 @@ def parse_arjun(output: str = "", output_path: Path | None = None) -> list[dict[
                 if url and params:
                     results.append({"url": url, "method": method, "params": params})
             return results
+        if isinstance(data, dict):
+            # Common variants:
+            # 1) {"results": [{"url": "...", "params": [...]}, ...]}
+            # 2) {"https://example.com": ["p1","p2"], ...}
+            if isinstance(data.get("results"), list):
+                for item in data["results"]:
+                    if not isinstance(item, dict):
+                        continue
+                    url = item.get("url") or item.get("endpoint") or ""
+                    method = (item.get("method") or "GET").upper()
+                    params = item.get("params") or item.get("parameters") or []
+                    if isinstance(params, str):
+                        params = [p.strip() for p in params.split(",") if p.strip()]
+                    if url and params:
+                        results.append({"url": url, "method": method, "params": params})
+                if results:
+                    return results
+            for key, val in data.items():
+                if isinstance(val, (list, tuple)) and isinstance(key, str) and key.startswith("http"):
+                    params = [str(p).strip() for p in val if str(p).strip()]
+                    if params:
+                        results.append({"url": key, "method": "GET", "params": params})
+            if results:
+                return results
     except (json.JSONDecodeError, TypeError):
         pass
 

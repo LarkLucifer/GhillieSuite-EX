@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import base64
 import html as _html
 import json
 from datetime import datetime
@@ -34,7 +35,7 @@ from rich.console import Console
 
 from ghilliesuite_ex.config import Config, cfg as global_cfg
 from ghilliesuite_ex.state.db import StateDB
-from ghilliesuite_ex.state.models import Finding, Host, Endpoint
+from ghilliesuite_ex.state.models import Finding, Host, Endpoint, Screenshot
 
 
 # ── Severity metadata ─────────────────────────────────────────────────────────────────────
@@ -52,6 +53,52 @@ _HOT_SEVERITIES = frozenset({"critical", "high", "medium"})
 
 # ── Advisory tool names (passive, rendered in separate section) ─────────────────
 _ADVISORY_TOOLS = frozenset({"bola_check", "ai_advisory"})
+
+_MAX_SCREENSHOT_BYTES = 2 * 1024 * 1024  # 2 MB cap for inline HTML embedding
+_MAX_EVIDENCE_CHARS = 8000
+
+
+def _extract_evidence_paths(text: str) -> tuple[str, str]:
+    """Extract evidence request/response file paths from a finding's evidence."""
+    req_path = ""
+    res_path = ""
+    for line in (text or "").splitlines():
+        if "Request:" in line:
+            req_path = line.split("Request:", 1)[-1].strip()
+        if "Response:" in line:
+            res_path = line.split("Response:", 1)[-1].strip()
+    return req_path, res_path
+
+
+def _read_text_safe(path: str, max_chars: int = _MAX_EVIDENCE_CHARS) -> str:
+    p = Path(path)
+    if not p.exists():
+        return ""
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return text[:max_chars]
+
+
+def _image_data_uri(path: str) -> str:
+    p = Path(path)
+    if not p.exists():
+        return ""
+    try:
+        if p.stat().st_size > _MAX_SCREENSHOT_BYTES:
+            return ""
+        data = p.read_bytes()
+    except OSError:
+        return ""
+    ext = p.suffix.lower()
+    mime = "image/png"
+    if ext in (".jpg", ".jpeg"):
+        mime = "image/jpeg"
+    elif ext in (".webp",):
+        mime = "image/webp"
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
 
 
 class HtmlReporter:
@@ -92,6 +139,7 @@ class HtmlReporter:
         findings:  list[Finding]  = await self.db.get_findings()
         hosts:     list[Host]     = await self.db.get_hosts()
         endpoints: list[Endpoint] = await self.db.get_endpoints()
+        screenshots: list[Screenshot] = await self.db.get_screenshots()
 
         self.console.print(f"[cyan]  Generating AI summaries for {len(findings)} finding(s)…[/cyan]")
         enriched = await self._enrich_findings(findings, hosts)
@@ -105,6 +153,17 @@ class HtmlReporter:
             "js_llm_timeout": self.cfg.js_llm_timeout,
         }
 
+        screenshots_render = [
+            {
+                "url": s.url,
+                "path": s.path,
+                "title": s.title,
+                "status": s.status,
+                "data_uri": _image_data_uri(s.path),
+            }
+            for s in screenshots
+        ]
+
         html_content = _render_html(
             target=target,
             scope=scope,
@@ -112,6 +171,7 @@ class HtmlReporter:
             findings=enriched,
             hosts=hosts,
             endpoints=endpoints,
+            screenshots=screenshots_render,
             js_config=js_config,
         )
 
@@ -243,6 +303,10 @@ class HtmlReporter:
             if "BOLA/IDOR Detected" in f.title:
                 sev_str = "critical"
 
+            req_path, res_path = _extract_evidence_paths(f.evidence)
+            req_text = _read_text_safe(req_path) if req_path else ""
+            res_text = _read_text_safe(res_path) if res_path else ""
+
             enriched.append({
                 "id":                 f.id,
                 "tool":               f.tool,
@@ -258,6 +322,10 @@ class HtmlReporter:
                 "remediation":        title_cache[f.title].get("remediation", ""),
                 "host_status":        host_status,
                 "host_tech":          host_tech,
+                "evidence_request_path": req_path,
+                "evidence_response_path": res_path,
+                "evidence_request": req_text,
+                "evidence_response": res_text,
             })
 
         return enriched
@@ -337,11 +405,13 @@ def _render_html(
     findings: list[dict[str, Any]],
     hosts: list[Host],
     endpoints: list[Endpoint],
+    screenshots: list[dict[str, Any]] | None = None,
     js_config: dict[str, Any] | None = None,
 ) -> str:
     # Filter out inactive hosts and their endpoints
     active_hosts = [h for h in hosts if 200 <= getattr(h, "status_code", 0) < 400]
     active_domains = {h.domain for h in active_hosts}
+    screenshots = screenshots or []
     
     active_endpoints = []
     for ep in endpoints:
@@ -524,6 +594,17 @@ def _render_html(
     </section>'''}
 
     <!-- ── Hosts appendix ─────────────────────────────────────────────────────────── -->
+    {"" if not screenshots else f'''
+    <section>
+      <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
+        Visual Evidence (Screenshots) ({len(screenshots)})
+      </h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {"".join(_screenshot_card(s) for s in screenshots[:24])}
+      </div>
+      {"" if len(screenshots) <= 24 else f'<p class="text-xs text-gray-500 mt-2">Showing 24 of {len(screenshots)} screenshots.</p>'}
+    </section>'''}
+
     {"" if not hosts else f'''
     <section>
       <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
@@ -608,6 +689,10 @@ def _finding_card(f: dict[str, Any]) -> str:
     raw_out     = f.get("raw_output", "") or ""
     # Truncate and escape raw output for display
     raw_display = _e(raw_out[:800]) if raw_out.strip() else ""
+    req_path    = _e(f.get("evidence_request_path", "") or "")
+    res_path    = _e(f.get("evidence_response_path", "") or "")
+    req_text    = _e(f.get("evidence_request", "") or "")
+    res_text    = _e(f.get("evidence_response", "") or "")
     tool_name   = f.get("tool", "")
     target_url  = f.get("target", "")
     h_status    = f.get("host_status", "")
@@ -625,6 +710,19 @@ def _finding_card(f: dict[str, Any]) -> str:
               <p class="text-emerald-500 text-xs uppercase font-semibold mb-1">🔬 Proof / Raw Tool Output</p>
               <pre class="bg-black border border-emerald-900/50 rounded-lg p-3 text-xs text-emerald-300 overflow-x-auto max-h-40">{raw_display}</pre>
             </div>""" if raw_display else ""
+
+    evidence_files_block = ""
+    if req_text or res_text or req_path or res_path:
+        evidence_files_block = f"""
+            <details class="mt-3">
+              <summary class="text-xs text-gray-500 cursor-pointer">Captured HTTP Evidence (request/response)</summary>
+              <div class="mt-2 space-y-2">
+                {f'<div class="text-[11px] text-gray-600 break-all">Request File: {req_path}</div>' if req_path else ''}
+                {f'<pre class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-xs text-gray-300 whitespace-pre-wrap max-h-56 overflow-y-auto">{req_text}</pre>' if req_text else ''}
+                {f'<div class="text-[11px] text-gray-600 break-all">Response File: {res_path}</div>' if res_path else ''}
+                {f'<pre class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-xs text-gray-300 whitespace-pre-wrap max-h-56 overflow-y-auto">{res_text}</pre>' if res_text else ''}
+              </div>
+            </details>"""
 
     return f"""
     <div class="finding-card bg-gray-900 border-l-4 {border_cls} rounded-xl mb-4 overflow-hidden" data-severity="{_e(sev)}">
@@ -668,6 +766,7 @@ def _finding_card(f: dict[str, Any]) -> str:
               <p class="text-gray-400 font-mono text-xs">Response: {status_str}{tech_str}</p>
               <pre class="text-xs text-gray-400 mt-2 overflow-x-auto whitespace-pre-wrap">{evidence}</pre>
               {proof_block}
+              {evidence_files_block}
             </div>
           </div>
           <div>
@@ -678,6 +777,31 @@ def _finding_card(f: dict[str, Any]) -> str:
           </div>
         </div>
       </div>
+    </div>"""
+
+
+def _screenshot_card(s: dict[str, Any]) -> str:
+    url = _e(s.get("url", ""))
+    title = _e(s.get("title", "")) or "Screenshot"
+    status = _e(s.get("status", "")) if s.get("status") else ""
+    path = _e(s.get("path", ""))
+    data_uri = s.get("data_uri") or ""
+    img_block = (
+        f'<img src="{data_uri}" alt="{title}" class="rounded-lg border border-gray-800 w-full h-auto" />'
+        if data_uri
+        else '<div class="text-xs text-gray-500 italic">Screenshot file not embedded.</div>'
+    )
+    return f"""
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3">
+      <div class="mb-2">
+        <div class="text-xs text-gray-400 font-mono break-all">{url}</div>
+        <div class="flex items-center gap-2 mt-1">
+          <span class="text-xs bg-gray-800 text-gray-300 px-2 py-0.5 rounded-full">{title}</span>
+          {f'<span class="text-xs text-gray-500">HTTP {status}</span>' if status else ''}
+        </div>
+      </div>
+      {img_block}
+      <div class="text-[10px] text-gray-600 mt-2 break-all">{path}</div>
     </div>"""
 
 

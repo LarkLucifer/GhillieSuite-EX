@@ -86,3 +86,18 @@ class Service:
         default_factory=lambda: datetime.utcnow().isoformat()
     )
     id: int | None = None
+
+
+@dataclass
+class Screenshot:
+    """A captured screenshot artifact (e.g., gowitness)."""
+
+    url: str
+    path: str
+    title: str = ""
+    status: int = 0
+    source_tool: str = "gowitness"
+    captured_at: str = field(
+        default_factory=lambda: datetime.utcnow().isoformat()
+    )
+    id: int | None = None

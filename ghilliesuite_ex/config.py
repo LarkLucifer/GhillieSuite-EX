@@ -184,6 +184,13 @@ class Config:
     enable_screenshots: bool = False
     """If True, enable gowitness screenshots during recon."""
 
+    # Report and evidence paths — set at runtime by CLI
+    output_dir: str = "reports"
+    """Directory where JSON/MD/HTML reports are written."""
+
+    evidence_dir: str = "evidence"
+    """Directory where request/response evidence files are stored."""
+
     @property
     def auth_headers_flags(self) -> list[str]:
         """
