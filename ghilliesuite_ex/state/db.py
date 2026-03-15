@@ -156,12 +156,18 @@ class StateDB:
 
     async def insert_host(self, host: Host) -> int:
         """Insert or ignore a host record. Returns the row id."""
+        ip_val = host.ip
+        if isinstance(ip_val, (list, tuple)):
+            ip_val = ",".join(str(x) for x in ip_val if x)
+        tech_val = host.tech_stack
+        if isinstance(tech_val, (list, tuple)):
+            tech_val = ",".join(str(x) for x in tech_val if x)
         cursor = await self._db.execute(
             """
             INSERT OR IGNORE INTO hosts (domain, ip, status_code, server, tech_stack, discovered_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (host.domain, host.ip, host.status_code, host.server, host.tech_stack, host.discovered_at),
+            (host.domain, ip_val, host.status_code, host.server, tech_val, host.discovered_at),
         )
         await self._db.commit()
         # If ignored (duplicate), fetch the existing id
@@ -176,24 +182,37 @@ class StateDB:
         Insert or update a host record. Updates non-empty fields on conflict.
         Returns the row id of the host.
         """
+        ip_val = host.ip
+        if isinstance(ip_val, (list, tuple)):
+            ip_val = ",".join(str(x) for x in ip_val if x)
+        tech_val = host.tech_stack
+        if isinstance(tech_val, (list, tuple)):
+            tech_val = ",".join(str(x) for x in tech_val if x)
         # Try insert first
-        host_id = await self.insert_host(host)
+        host_id = await self.insert_host(Host(
+            domain=host.domain,
+            ip=ip_val,
+            status_code=host.status_code,
+            server=host.server,
+            tech_stack=tech_val,
+            discovered_at=host.discovered_at,
+        ))
         # Update non-empty fields if already exists
         if host_id:
             updates = []
             params: list = []
-            if host.ip:
+            if ip_val:
                 updates.append("ip = ?")
-                params.append(host.ip)
+                params.append(ip_val)
             if host.status_code:
                 updates.append("status_code = ?")
                 params.append(host.status_code)
             if host.server:
                 updates.append("server = ?")
                 params.append(host.server)
-            if host.tech_stack:
+            if tech_val:
                 updates.append("tech_stack = ?")
-                params.append(host.tech_stack)
+                params.append(tech_val)
             if updates:
                 params.append(host.domain)
                 await self._db.execute(
