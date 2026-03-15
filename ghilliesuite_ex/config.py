@@ -225,6 +225,14 @@ class Config:
     If True, ignore Commander/WAF stealth signals and run full execution.
     This overrides any auto-stealth detection for lab or WAF stress testing.
     """
+
+    # ── Redirect control — set at runtime by CLI --allow-redirects flag
+    allow_redirects: bool = False
+    """If True, allow httpx to follow redirects during recon probing."""
+
+    # ── Optional AI planner in Supervisor
+    ai_planner: bool = False
+    """If True, allow the Supervisor to request advisory targeting from the LLM."""
     def __post_init__(self) -> None:
         """Run auto-detection immediately after the dataclass is initialised."""
         self.ai_provider, self.active_api_key = detect_ai_provider()
