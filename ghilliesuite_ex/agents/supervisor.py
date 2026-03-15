@@ -170,19 +170,11 @@ class SupervisorAgent(BaseAgent):
 
         allowed_tools = list(TOOL_REGISTRY.keys())
         prompt = (
-            "You are an advisory assistant. Suggest a single tool to run next, or null.
-"
-            "Return ONLY JSON: {"tool": <tool|NULL>, "target": <url|domain|NULL>, "reason": <short>}
-
-"
-            f"Allowed tools: {', '.join(allowed_tools)}
-"
-            f"Scope: {', '.join(self.scope)}
-
-"
-            f"DB summary:
-{summary}
-"
+            "You are an advisory assistant. Suggest a single tool to run next, or null.\n"
+            "Return ONLY JSON: {\"tool\": <tool|NULL>, \"target\": <url|domain|NULL>, \"reason\": <short>}\n\n"
+            f"Allowed tools: {', '.join(allowed_tools)}\n"
+            f"Scope: {', '.join(self.scope)}\n\n"
+            f"DB summary:\n{summary}\n"
         )
 
         raw = await self._ask_ai(prompt)
