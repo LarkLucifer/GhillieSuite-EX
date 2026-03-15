@@ -116,3 +116,8 @@ def scope_filter_domains(domains: list[str], scope_domains: list[str]) -> list[s
 def scope_filter_urls(urls: list[str], scope_domains: list[str]) -> list[str]:
     """Filter a list of URLs to in-scope entries only."""
     return [u for u in urls if is_in_scope(u, scope_domains)]
+
+
+def filter_in_scope(targets: list[str], scope_domains: list[str]) -> list[str]:
+    """Return only targets that are in scope (domains or URLs)."""
+    return [t for t in targets if is_in_scope(t, scope_domains)]

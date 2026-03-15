@@ -36,7 +36,7 @@ from ghilliesuite_ex.utils.parsers import (
     parse_naabu,
     parse_arjun,
 )
-from ghilliesuite_ex.utils.scope import is_in_scope, scope_filter_domains, scope_filter_urls
+from ghilliesuite_ex.utils.scope import is_in_scope, scope_filter_domains, scope_filter_urls, filter_in_scope
 from ghilliesuite_ex.utils.ui import tool_result_panel
 
 from .base import AgentResult, AgentTask, BaseAgent
@@ -180,6 +180,7 @@ class ReconAgent(BaseAgent):
         else:
             httpx_targets = subdomains[:]
 
+        httpx_targets = filter_in_scope(httpx_targets, self.scope)
         _HTTPX_IN.write_text("\n".join(httpx_targets), encoding="utf-8")
         httpx_cmd = build_command(
             "httpx", target,

@@ -208,7 +208,6 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "httpx",
             "-l", "{input_file}",
             "-silent", "-status-code", "-title", "-tech-detect",
-            "-follow-redirects",
             "-random-agent",       # WAF bypass: rotate User-Agent per request
             "-retries", "2",       # retry failed probes instead of silently dropping
             "-rl", "50",           # rate-limit to 50 req/s — avoids 429/WAF blocks
@@ -373,6 +372,7 @@ def build_command(
     wordlist: str | None = None,
     auth_headers: list[str] | None = None,
     stealth: bool | None = None,
+    allow_redirects: bool | None = None,
     tech_stack: str = "",
 ) -> list[str]:
     """
@@ -434,6 +434,16 @@ def build_command(
 
     if extra_args:
         cmd.extend(extra_args)
+
+    if allow_redirects is None:
+        try:
+            from ghilliesuite_ex.config import cfg as _cfg
+            allow_redirects = bool(getattr(_cfg, "allow_redirects", False))
+        except Exception:
+            allow_redirects = False
+
+    if allow_redirects and tool_name == "httpx" and "-follow-redirects" not in cmd:
+        cmd.append("-follow-redirects")
 
     if stealth is None:
         try:

@@ -111,6 +111,12 @@ def hunt(
         help="Enable stealth rate-limiting to reduce WAF 429s (nuclei/sqlmap/ffuf).",
         is_flag=True,
     ),
+    allow_redirects: bool = typer.Option(
+        False,
+        "--allow-redirects",
+        help="Allow httpx to follow redirects during recon probing.",
+        is_flag=True,
+    ),
     disable_stealth: bool = typer.Option(
         False,
         "--disable-stealth",
@@ -141,6 +147,12 @@ def hunt(
         False,
         "--screenshots",
         help="Enable gowitness screenshots during recon (optional).",
+        is_flag=True,
+    ),
+    ai_planner: bool = typer.Option(
+        False,
+        "--ai-planner",
+        help="Enable LLM advisory targeting in Supervisor (rules-first by default).",
         is_flag=True,
     ),
     force_auto: bool = typer.Option(
@@ -218,10 +230,12 @@ def hunt(
         safe_mode=safe_mode,
         update_templates=update_templates,
         stealth=stealth,
+        allow_redirects=allow_redirects,
         disable_stealth=disable_stealth,
         cookie=cookie,
         header=header,
         screenshots=screenshots,
+        ai_planner=ai_planner,
         force_auto=force_auto,
         js_workers=js_workers,
         js_max_files=js_max_files,
@@ -252,10 +266,12 @@ async def _async_hunt(
     safe_mode: bool,
     update_templates: bool,
     stealth: bool,
+    allow_redirects: bool,
     disable_stealth: bool,
     cookie: str | None,
     header: str | None,
     screenshots: bool = False,
+    ai_planner: bool = False,
     force_auto: bool = False,
     js_workers: int | None = None,
     js_max_files: int | None = None,
@@ -291,6 +307,11 @@ async def _async_hunt(
         cfg.auth_header = header.strip()
 
     cfg.enable_screenshots = bool(screenshots)
+    cfg.ai_planner = bool(ai_planner)
+
+    if allow_redirects:
+        cfg.allow_redirects = True
+        console.print("[bold yellow]Redirects enabled[/bold yellow]  [dim]— httpx will follow redirects[/dim]")
 
     if stealth:
         cfg.stealth_mode = True
