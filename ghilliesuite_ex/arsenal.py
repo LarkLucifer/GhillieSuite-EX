@@ -64,7 +64,7 @@ _NODEJS_WORDLIST = [
 # ── Stealth Mode Overrides ────────────────────────────────────────────────────
 # Applied when cfg.stealth_mode is True or build_command(..., stealth=True)
 _STEALTH_ARGS: dict[str, list[str]] = {
-    "nuclei": ["-rl", "10", "-c", "5", "-bs", "1"],
+    "nuclei": ["-rl", "10", "-c", "5", "-bs", "1", "-timeout", "5"],
     "sqlmap": ["--delay=1"],
     "ffuf":   ["-t", "5", "-p", "0.5"],
     "dirb":   ["-t", "5", "-p", "0.5"],
@@ -87,7 +87,7 @@ def apply_stealth_args(tool_name: str, cmd: list[str], enabled: bool) -> list[st
             continue
 
         if tool_name in ("nuclei",):
-            if tok in ("-rl", "-c", "-bs"):
+            if tok in ("-rl", "-c", "-bs", "-timeout"):
                 skip_next = True
                 continue
         elif tool_name in ("ffuf", "dirb"):
@@ -100,10 +100,55 @@ def apply_stealth_args(tool_name: str, cmd: list[str], enabled: bool) -> list[st
                 continue
             if tok.startswith("--delay="):
                 continue
+        if tool_name in ("nuclei",) and tok.startswith(("-rl=", "-c=", "-bs=", "-timeout=")):
+            continue
 
         cleaned.append(tok)
 
-    cleaned.extend(_STEALTH_ARGS[tool_name])
+    stealth_args = _STEALTH_ARGS[tool_name]
+    if tool_name == "nuclei":
+        try:
+            from ghilliesuite_ex.config import cfg as _cfg
+            timeout = max(1, int(getattr(_cfg, "nuclei_http_timeout", 5)))
+        except Exception:
+            timeout = 5
+        stealth_args = list(stealth_args)
+        if "-timeout" in stealth_args:
+            idx = stealth_args.index("-timeout")
+            if idx + 1 < len(stealth_args):
+                stealth_args[idx + 1] = str(timeout)
+
+    cleaned.extend(stealth_args)
+    return cleaned
+
+
+def _apply_nuclei_tuning(
+    cmd: list[str],
+    rate_limit: int | None,
+    concurrency: int | None,
+    http_timeout: int | None,
+) -> list[str]:
+    """Override nuclei performance flags with configured values."""
+    cleaned: list[str] = []
+    skip_next = False
+    for tok in cmd:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in ("-rl", "-c", "-timeout"):
+            skip_next = True
+            continue
+        if tok.startswith(("-rl=", "-c=", "-timeout=")):
+            continue
+        cleaned.append(tok)
+
+    if http_timeout is not None:
+        cleaned.extend(["-timeout", str(max(1, int(http_timeout)))])
+    if rate_limit is not None:
+        cleaned.extend(["-rl", str(max(1, int(rate_limit)))])
+    if concurrency is not None:
+        cleaned.extend(["-c", str(max(1, int(concurrency)))])
+
     return cleaned
 
 
@@ -287,8 +332,9 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "nuclei", "-u", "{target}",
             "-tags", "cve,ssrf,lfi,misconfig,exposure,graphql",  # targeted high-signal templates only
             "-severity", "medium,high,critical",
-            "-rl", "50",    # rate-limit to 50 req/s — avoids WAF/IDS triggers
-            "-c", "20",     # concurrency: 20 parallel template checks
+            "-timeout", "5",  # fail fast on tarpits
+            "-rl", "150",     # rate-limit to 150 req/s ? avoids WAF/IDS triggers
+            "-c", "50",       # concurrency: 50 parallel template checks
             "-silent", "-j",
         ],
         scope_flag="-u {target}",
@@ -434,6 +480,18 @@ def build_command(
 
     if extra_args:
         cmd.extend(extra_args)
+
+    if tool_name == "nuclei":
+        try:
+            from ghilliesuite_ex.config import cfg as _cfg
+            cmd = _apply_nuclei_tuning(
+                cmd,
+                getattr(_cfg, "nuclei_rate_limit", None),
+                getattr(_cfg, "nuclei_concurrency", None),
+                getattr(_cfg, "nuclei_http_timeout", None),
+            )
+        except Exception:
+            pass
 
     if allow_redirects is None:
         try:

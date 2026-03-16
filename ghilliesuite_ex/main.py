@@ -99,6 +99,26 @@ def hunt(
         help="Enable aggressive Nuclei speed + severity filtering flags.",
         show_default=False,
     ),
+    nuclei_rate_limit: Optional[int] = typer.Option(
+        None,
+        "--rate-limit",
+        "--nuclei-rate-limit",
+        help="Nuclei rate limit (requests per second).",
+        show_default=False,
+    ),
+    nuclei_concurrency: Optional[int] = typer.Option(
+        None,
+        "--concurrency",
+        "--nuclei-concurrency",
+        help="Nuclei concurrency (parallel template checks).",
+        show_default=False,
+    ),
+    nuclei_http_timeout: Optional[int] = typer.Option(
+        None,
+        "--nuclei-http-timeout",
+        help="Nuclei per-request timeout in seconds (maps to -timeout).",
+        show_default=False,
+    ),
     safe_mode: bool = typer.Option(
         False,
         "--safe-mode",
@@ -244,6 +264,9 @@ def hunt(
         timeout=timeout,
         nuclei_timeout=nuclei_timeout,
         fast_nuclei=fast_nuclei,
+        nuclei_rate_limit=nuclei_rate_limit,
+        nuclei_concurrency=nuclei_concurrency,
+        nuclei_http_timeout=nuclei_http_timeout,
         safe_mode=safe_mode,
         update_templates=update_templates,
         stealth=stealth,
@@ -282,6 +305,9 @@ async def _async_hunt(
     timeout: int,
     nuclei_timeout: int | None,
     fast_nuclei: bool | None,
+    nuclei_rate_limit: int | None,
+    nuclei_concurrency: int | None,
+    nuclei_http_timeout: int | None,
     safe_mode: bool,
     update_templates: bool,
     stealth: bool,
@@ -366,6 +392,12 @@ async def _async_hunt(
 
     if fast_nuclei is not None:
         cfg.fast_nuclei = bool(fast_nuclei)
+    if nuclei_rate_limit is not None:
+        cfg.nuclei_rate_limit = nuclei_rate_limit
+    if nuclei_concurrency is not None:
+        cfg.nuclei_concurrency = nuclei_concurrency
+    if nuclei_http_timeout is not None:
+        cfg.nuclei_http_timeout = nuclei_http_timeout
 
     if js_workers is not None:
         cfg.js_max_workers = js_workers

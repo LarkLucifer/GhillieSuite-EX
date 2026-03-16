@@ -101,9 +101,17 @@ Options:
   --evidence-dir        Evidence output directory             [default: evidence/]
   --max-loops           Max agent decision loops              [default: 15]
   --timeout             Per-tool timeout (seconds)            [default: 180]
+  --nuclei-timeout      Nuclei-only subprocess timeout (sec)
+  --nuclei-http-timeout Nuclei per-request timeout (sec)
+  --rate-limit          Nuclei requests per second
+  --concurrency         Nuclei parallel template checks
+  --fast-nuclei         Aggressive Nuclei speed + severity filters
   --safe-mode           HitL on ALL tools                     [flag]
   --force-auto          Bypass ALL HitL prompts (CI/CD mode)  [flag]
+  --force-exploit       Bypass AI filtering for exploit tools [flag]
   --stealth             Enable rate limiting for WAF evasion  [flag]
+  --disable-stealth     Ignore WAF/Commander stealth signals  [flag]
+  --allow-redirects     httpx follows redirects during recon  [flag]
   --no-update-templates Skip nuclei -ut on startup            [flag]
   --cookie / -c         Session cookie string (authenticated scanning)
   --header              Custom HTTP header (e.g. Authorization: Bearer ...)
@@ -152,7 +160,7 @@ All discovered findings pass through an `httpx` validation layer. 404 endpoints 
 
 ### Deep Research & Execution (Tier 0-9 Attacks)
 - **4-Stage Crash-Proof Pipeline**: The `ExploitAgent` strictly executes Recon → VulnScan → Contextual Exploitation → Advanced Logic. Every stage is wrapped in a global exception handler, guaranteeing a 100% stable 4-day unattended run.
-- **WAF Resilience**: Native execution of `httpx` and `nuclei` uses rotated user-agents, request retries, and strict rate limits (`-rl 50`) to bypass active WAFs and blocklisting. Add `--stealth` to apply conservative per-tool rate limiting (nuclei/sqlmap/ffuf).
+- **WAF Resilience**: Native execution of `httpx` and `nuclei` uses rotated user-agents, request retries, strict rate limits (`-rl 150`), and fast-fail request timeouts (`-timeout 5`) to bypass active WAFs and blocklisting. Use `--rate-limit`, `--concurrency`, and `--nuclei-http-timeout` to tune; add `--stealth` to apply conservative per-tool limits while keeping fast-fail timeouts (nuclei/sqlmap/ffuf).
 - **Cloud Metadata SSRF**: SSRF-prone endpoints are dynamically injected with AWS/GCP/Azure payloads (e.g., `169.254.169.254/latest/meta-data`). Responses are flagged if they contain cloud credentials or IAM profiles.
 - **Cache Poisoning**: Unkeyed headers (`X-Forwarded-Host`, `X-Host`) are sent with canary hostnames to verify reflection and edge cache pollution vulnerabilities.
 - **Prototype Pollution 2.0**: JS sinks are dynamically tested in a headless `playwright` sandbox to actively verify standard payload injections via `Object.assign`. Successfully poisoned objects are auto-promoted to critical severity with a VERIFIED label.

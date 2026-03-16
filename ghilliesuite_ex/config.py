@@ -130,6 +130,15 @@ class Config:
     fast_nuclei: bool = field(
         default_factory=lambda: os.getenv("FAST_NUCLEI", "0").strip() in ("1", "true", "yes", "on")
     )
+    nuclei_rate_limit: int = field(
+        default_factory=lambda: int(os.getenv("NUCLEI_RATE_LIMIT", "150"))
+    )
+    nuclei_concurrency: int = field(
+        default_factory=lambda: int(os.getenv("NUCLEI_CONCURRENCY", "50"))
+    )
+    nuclei_http_timeout: int = field(
+        default_factory=lambda: int(os.getenv("NUCLEI_HTTP_TIMEOUT", "5"))
+    )
 
     # â”€â”€ JS Deep Inspection limits
     js_max_workers: int = field(
