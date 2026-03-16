@@ -270,6 +270,30 @@ class Config:
     """
     If True, bypass AI Commander filtering in ExploitAgent and run brute-force scans.
     """
+
+    # ── WAF Evasion Engine — set at runtime by CLI --waf-evasion flag
+    waf_evasion: bool = False
+    """
+    If True, enable the deterministic WAF bypass mutation engine.
+    Generates vendor-tailored mutated payloads and verifies bypasses.
+    Gated behind --force-auto or HitL approval for safety.
+    """
+
+    waf_mutation_count: int = field(
+        default_factory=lambda: int(os.getenv("WAF_MUTATION_COUNT", "5"))
+    )
+    """Number of mutated payload variants to generate per target parameter."""
+
+    waf_verify_timeout: float = field(
+        default_factory=lambda: float(os.getenv("WAF_VERIFY_TIMEOUT", "10.0"))
+    )
+    """Timeout (seconds) for each bypass verification request."""
+
+    waf_max_retries: int = field(
+        default_factory=lambda: int(os.getenv("WAF_MAX_RETRIES", "3"))
+    )
+    """Max mutation retry rounds if initial mutations are still blocked."""
+
     def __post_init__(self) -> None:
         """Run auto-detection immediately after the dataclass is initialised."""
         self.ai_provider, self.active_api_key = detect_ai_provider()

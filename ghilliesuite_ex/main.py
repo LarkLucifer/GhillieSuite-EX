@@ -202,6 +202,17 @@ def hunt(
         is_flag=True,
         rich_help_panel="Automation",
     ),
+    waf_evasion: bool = typer.Option(
+        False,
+        "--waf-evasion",
+        help=(
+            "Enable the deterministic WAF Evasion & Payload Mutation Engine. "
+            "Generates vendor-tailored mutated payloads and verifies WAF bypasses. "
+            "Requires --force-auto or explicit HitL approval."
+        ),
+        is_flag=True,
+        rich_help_panel="Automation",
+    ),
     js_workers: Optional[int] = typer.Option(
         None,
         "--js-workers",
@@ -278,6 +289,7 @@ def hunt(
         ai_planner=ai_planner,
         force_auto=force_auto,
         force_exploit=force_exploit,
+        waf_evasion=waf_evasion,
         js_workers=js_workers,
         js_max_files=js_max_files,
         llm_concurrency=llm_concurrency,
@@ -319,6 +331,7 @@ async def _async_hunt(
     ai_planner: bool = False,
     force_auto: bool = False,
     force_exploit: bool = False,
+    waf_evasion: bool = False,
     js_workers: int | None = None,
     js_max_files: int | None = None,
     llm_concurrency: int | None = None,
@@ -355,6 +368,7 @@ async def _async_hunt(
     cfg.enable_screenshots = bool(screenshots)
     cfg.ai_planner = bool(ai_planner)
     cfg.force_exploit = bool(force_exploit)
+    cfg.waf_evasion = bool(waf_evasion)
     cfg.output_dir = output_dir
     cfg.evidence_dir = evidence_dir
 
@@ -364,6 +378,18 @@ async def _async_hunt(
             "[dim]- AI Commander filtering bypassed for ExploitAgent.[/dim]"
         )
         console.print("[dim]  dalfox/sqlmap: all URLs with params; nuclei: all hosts.[/dim]")
+        console.print()
+
+    if waf_evasion:
+        console.print(
+            "[bold bright_yellow]WAF EVASION ENGINE ACTIVE[/bold bright_yellow]  "
+            "[dim]— deterministic payload mutations + vendor-tailored bypasses enabled[/dim]"
+        )
+        console.print(
+            f"[dim]  mutation_count={cfg.waf_mutation_count}, "
+            f"verify_timeout={cfg.waf_verify_timeout}s, "
+            f"max_retries={cfg.waf_max_retries}[/dim]"
+        )
         console.print()
 
     if allow_redirects:

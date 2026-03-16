@@ -65,9 +65,14 @@ _NODEJS_WORDLIST = [
 # Applied when cfg.stealth_mode is True or build_command(..., stealth=True)
 _STEALTH_ARGS: dict[str, list[str]] = {
     "nuclei": ["-rl", "10", "-c", "5", "-bs", "1", "-timeout", "5"],
-    "sqlmap": ["--delay=1"],
+    "sqlmap": ["--delay=1", "--random-agent"],
     "ffuf":   ["-t", "5", "-p", "0.5"],
     "dirb":   ["-t", "5", "-p", "0.5"],
+}
+
+# Extended stealth args applied when WAF evasion mode is enabled
+_WAF_EVASION_STEALTH_ARGS: dict[str, list[str]] = {
+    "sqlmap": ["--delay=2", "--random-agent", "--tamper=between,randomcase,space2comment"],
 }
 
 
