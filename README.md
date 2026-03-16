@@ -106,6 +106,7 @@ Options:
   --rate-limit          Nuclei requests per second
   --concurrency         Nuclei parallel template checks
   --fast-nuclei         Aggressive Nuclei speed + severity filters
+  --waf-evasion         Enable strict WAF fingerprinting & mutation [flag]
   --safe-mode           HitL on ALL tools                     [flag]
   --force-auto          Bypass ALL HitL prompts (CI/CD mode)  [flag]
   --force-exploit       Bypass AI filtering for exploit tools [flag]
@@ -160,7 +161,7 @@ All discovered findings pass through an `httpx` validation layer. 404 endpoints 
 
 ### Deep Research & Execution (Tier 0-9 Attacks)
 - **4-Stage Crash-Proof Pipeline**: The `ExploitAgent` strictly executes Recon → VulnScan → Contextual Exploitation → Advanced Logic. Every stage is wrapped in a global exception handler, guaranteeing a 100% stable 4-day unattended run.
-- **WAF Resilience**: Native execution of `httpx` and `nuclei` uses rotated user-agents, request retries, strict rate limits (`-rl 150`), and fast-fail request timeouts (`-timeout 5`) to bypass active WAFs and blocklisting. Use `--rate-limit`, `--concurrency`, and `--nuclei-http-timeout` to tune; add `--stealth` to apply conservative per-tool limits while keeping fast-fail timeouts (nuclei/sqlmap/ffuf).
+- **WAF Resilience**: The built-in **WAF Evasion Engine** (`--waf-evasion`) fingerprints over 30 WAF vendors (Cloudflare, Akamai, Imperva, etc.) and generates deterministic payload mutations targeted at the specific firewall. For native tool execution, `httpx` and `nuclei` use rotated user-agents, request retries, strict rate limits (`-rl 150`), and fast-fail request timeouts (`-timeout 5`) to bypass active blocklisting. Add `--stealth` to apply conservative per-tool limits.
 - **Cloud Metadata SSRF**: SSRF-prone endpoints are dynamically injected with AWS/GCP/Azure payloads (e.g., `169.254.169.254/latest/meta-data`). Responses are flagged if they contain cloud credentials or IAM profiles.
 - **Cache Poisoning**: Unkeyed headers (`X-Forwarded-Host`, `X-Host`) are sent with canary hostnames to verify reflection and edge cache pollution vulnerabilities.
 - **Prototype Pollution 2.0**: JS sinks are dynamically tested in a headless `playwright` sandbox to actively verify standard payload injections via `Object.assign`. Successfully poisoned objects are auto-promoted to critical severity with a VERIFIED label.
