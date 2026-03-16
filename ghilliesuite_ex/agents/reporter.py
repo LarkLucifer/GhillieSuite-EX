@@ -92,7 +92,8 @@ class ReporterAgent(BaseAgent):
                     "js_snippet_max_len": self.cfg.js_snippet_max_len,
                     "js_http_timeout": self.cfg.js_http_timeout,
                     "js_llm_timeout": self.cfg.js_llm_timeout,
-                }
+                },
+                "force_exploit": bool(getattr(self.cfg, "force_exploit", False)),
             },
             "stats": {
                 "hosts": len(hosts),
@@ -144,6 +145,12 @@ class ReporterAgent(BaseAgent):
             f"| Hosts discovered | {len(hosts)} |",
             f"| Endpoints mapped | {len(endpoints)} |",
             f"| Total findings   | {len(findings)} |",
+            f"",
+            f"## Execution Flags",
+            f"",
+            f"| Flag | Value |",
+            f"|------|-------|",
+            f"| `force_exploit` | {bool(getattr(self.cfg, 'force_exploit', False))} |",
             f"",
             f"## JS Deep Inspection Config",
             f"",

@@ -152,6 +152,9 @@ class HtmlReporter:
             "js_http_timeout": self.cfg.js_http_timeout,
             "js_llm_timeout": self.cfg.js_llm_timeout,
         }
+        execution_flags = {
+            "force_exploit": bool(getattr(self.cfg, "force_exploit", False)),
+        }
 
         screenshots_render = [
             {
@@ -173,6 +176,7 @@ class HtmlReporter:
             endpoints=endpoints,
             screenshots=screenshots_render,
             js_config=js_config,
+            execution_flags=execution_flags,
         )
 
         html_path.write_text(html_content, encoding="utf-8")
@@ -407,6 +411,7 @@ def _render_html(
     endpoints: list[Endpoint],
     screenshots: list[dict[str, Any]] | None = None,
     js_config: dict[str, Any] | None = None,
+    execution_flags: dict[str, Any] | None = None,
 ) -> str:
     # Filter out inactive hosts and their endpoints
     active_hosts = [h for h in hosts if 200 <= getattr(h, "status_code", 0) < 400]
@@ -436,6 +441,7 @@ def _render_html(
     counts_hot = {s: sum(1 for f in hot_findings if f["severity"] == s) for s in _SEVERITY_ORDER}
 
     js_config = js_config or {}
+    execution_flags = execution_flags or {}
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -490,6 +496,19 @@ def _render_html(
         {_stat_card("Medium", str(counts_all['medium']), "bg-yellow-950 border border-yellow-700", "text-yellow-400")}
         {_stat_card("Hosts Found", str(len(hosts)), "bg-gray-800", "text-sky-400")}
         {_stat_card("Endpoints", str(len(endpoints)), "bg-gray-800", "text-violet-400")}
+      </div>
+    </section>
+
+    <!-- Execution Flags -->
+    <section>
+      <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs">Execution Flags</h2>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 text-sm text-gray-300">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <div class="text-xs text-gray-500">Force Exploit</div>
+            <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("force_exploit", False)))}</div>
+          </div>
+        </div>
       </div>
     </section>
 

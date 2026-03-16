@@ -256,6 +256,11 @@ class Config:
     # ── Optional AI planner in Supervisor
     ai_planner: bool = False
     """If True, allow the Supervisor to request advisory targeting from the LLM."""
+
+    force_exploit: bool = False
+    """
+    If True, bypass AI Commander filtering in ExploitAgent and run brute-force scans.
+    """
     def __post_init__(self) -> None:
         """Run auto-detection immediately after the dataclass is initialised."""
         self.ai_provider, self.active_api_key = detect_ai_provider()

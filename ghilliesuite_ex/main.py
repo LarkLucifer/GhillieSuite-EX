@@ -171,6 +171,17 @@ def hunt(
         is_flag=True,
         rich_help_panel="Automation",
     ),
+    force_exploit: bool = typer.Option(
+        False,
+        "--force-exploit",
+        "--dumb-exploit",
+        help=(
+            "Brute-force mode for ExploitAgent. Bypasses AI Commander filtering and "
+            "feeds all discovered parameterized URLs to dalfox/sqlmap and all hosts to nuclei."
+        ),
+        is_flag=True,
+        rich_help_panel="Automation",
+    ),
     js_workers: Optional[int] = typer.Option(
         None,
         "--js-workers",
@@ -243,6 +254,7 @@ def hunt(
         screenshots=screenshots,
         ai_planner=ai_planner,
         force_auto=force_auto,
+        force_exploit=force_exploit,
         js_workers=js_workers,
         js_max_files=js_max_files,
         llm_concurrency=llm_concurrency,
@@ -280,6 +292,7 @@ async def _async_hunt(
     screenshots: bool = False,
     ai_planner: bool = False,
     force_auto: bool = False,
+    force_exploit: bool = False,
     js_workers: int | None = None,
     js_max_files: int | None = None,
     llm_concurrency: int | None = None,
@@ -315,8 +328,17 @@ async def _async_hunt(
 
     cfg.enable_screenshots = bool(screenshots)
     cfg.ai_planner = bool(ai_planner)
+    cfg.force_exploit = bool(force_exploit)
     cfg.output_dir = output_dir
     cfg.evidence_dir = evidence_dir
+
+    if force_exploit:
+        console.print(
+            "[bold red]FORCE-EXPLOIT MODE ACTIVE[/bold red]  "
+            "[dim]- AI Commander filtering bypassed for ExploitAgent.[/dim]"
+        )
+        console.print("[dim]  dalfox/sqlmap: all URLs with params; nuclei: all hosts.[/dim]")
+        console.print()
 
     if allow_redirects:
         cfg.allow_redirects = True
