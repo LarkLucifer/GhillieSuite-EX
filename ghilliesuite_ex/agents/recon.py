@@ -65,6 +65,35 @@ _USER_AGENTS = [
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
 ]
 
+_ARJUN_STATIC_EXTS = (
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
+    ".css", ".js", ".map",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".ico", ".pdf", ".zip", ".tar", ".gz", ".rar", ".7z",
+    ".mp4", ".mp3", ".avi", ".mov", ".mkv",
+)
+_ARJUN_SEO_PATHS = ("/page/", "/wp-content/", "/author/", "/tag/", "/category/")
+_ARJUN_PRIORITY_MARKERS = (".php", ".aspx", "/api/")
+
+
+def _is_arjun_priority(url: str) -> bool:
+    path = urlsplit(url).path.lower()
+    return any(marker in path for marker in _ARJUN_PRIORITY_MARKERS)
+
+
+def _is_arjun_candidate(url: str) -> bool:
+    path = urlsplit(url).path.lower()
+    if not path:
+        return False
+    if any(path.endswith(ext) for ext in _ARJUN_STATIC_EXTS):
+        return False
+    if not _is_arjun_priority(url):
+        if any(seg in path for seg in _ARJUN_SEO_PATHS):
+            return False
+        if path.endswith("/"):
+            return False
+    return True
+
 
 def _headers_from_flags(flags: list[str]) -> dict[str, str]:
     """Convert ['-H', 'Header: value', ...] into a headers dict."""
@@ -447,23 +476,46 @@ class ReconAgent(BaseAgent):
 
         # Phase 7: arjun (delta-only)
         arjun_urls_added = 0
-        arjun_targets = [u for u in new_endpoints if u and u not in arjun_history][:50]
+        raw_targets = [u for u in new_endpoints if u and u not in arjun_history]
+        raw_targets = [u for u in raw_targets if is_in_scope(u, self.scope)]
+        filtered_targets = [u for u in raw_targets if _is_arjun_candidate(u)]
+        filtered_targets = list(dict.fromkeys(filtered_targets))
+        priority_targets = [u for u in filtered_targets if _is_arjun_priority(u)]
+        other_targets = [u for u in filtered_targets if u not in priority_targets]
+        arjun_targets = (priority_targets + other_targets)[:15]
         if arjun_targets:
             self.console.print("[cyan]  Phase 7 - arjun parameter discovery[/cyan]")
             _ARJUN_IN.write_text("\n".join(arjun_targets) + "\n", encoding="utf-8")
-            arjun_cmd = build_command("arjun", target, input_file=_ARJUN_IN, output_file=_ARJUN_OUT)
+            arjun_cmd = build_command(
+                "arjun",
+                target,
+                input_file=_ARJUN_IN,
+                output_file=_ARJUN_OUT,
+                extra_args=["-t", "10"],
+            )
             with Status("[cyan]Running arjun (list mode)...[/cyan]", console=self.console):
                 arjun_result = await run_tool_to_file(arjun_cmd, _ARJUN_OUT, timeout=timeout)
             parsed_rows: list[dict] = []
             if arjun_result.ok or arjun_result.output_file:
                 parsed_rows = parse_arjun(output_path=arjun_result.output_file or _ARJUN_OUT)
             else:
-                self.console.print("[dim]arjun list mode failed; falling back to per-URL mode.[/dim]")
-                for idx, url in enumerate(arjun_targets):
+                self.console.print("[dim]arjun list mode failed; falling back to concurrent per-URL mode.[/dim]")
+                sem = asyncio.Semaphore(5)
+
+                async def _run_single(idx: int, url: str):
                     per_out = _TMP_DIR / f"arjun_out_{idx}.json"
-                    per_cmd = ["arjun", "-u", url, "-oJ", str(per_out)]
-                    with Status(f"[cyan]Running arjun -> {url}[/cyan]", console=self.console):
+                    per_cmd = ["arjun", "-u", url, "-oJ", str(per_out), "-t", "10"]
+                    async with sem:
                         per_res = await run_tool_to_file(per_cmd, per_out, timeout=timeout)
+                    return per_out, per_res
+
+                with Status("[cyan]Running arjun (per-URL, concurrent)...[/cyan]", console=self.console):
+                    results = await asyncio.gather(
+                        *[_run_single(idx, url) for idx, url in enumerate(arjun_targets)],
+                        return_exceptions=False,
+                    )
+
+                for per_out, per_res in results:
                     if per_res.ok or per_res.output_file:
                         parsed_rows.extend(parse_arjun(output_path=per_res.output_file or per_out))
 
