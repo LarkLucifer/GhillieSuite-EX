@@ -434,12 +434,16 @@ async def verify_bypass(
     try:
         from ghilliesuite_ex.agents.base import _run_in_thread
 
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
         def _do_request():
             return _requests.get(
                 injected_url,
                 timeout=timeout,
                 allow_redirects=True,
                 headers=headers,
+                verify=False,
             )
 
         resp = await _run_in_thread(_do_request)
