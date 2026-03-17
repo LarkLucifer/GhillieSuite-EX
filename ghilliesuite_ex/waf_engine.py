@@ -19,6 +19,8 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
+_verify_session: Any = None
+
 # ── WAF Fingerprint Signals ──────────────────────────────────────────────────
 # Each entry: (signal_type, pattern/keyword, vendor, weight)
 # signal_type: "header" checks response headers, "body" checks response body.
@@ -433,20 +435,28 @@ async def verify_bypass(
 
     try:
         from ghilliesuite_ex.agents.base import _run_in_thread
+        import asyncio
 
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
+        # Connection pooling by keeping the session alive if this is called in a loop
+        global _verify_session
+        if '_verify_session' not in globals() or _verify_session is None:
+            _verify_session = _requests.Session()
+            _verify_session.verify = False
+
+        _verify_session.headers.update(headers)
+
         def _do_request():
-            return _requests.get(
+            return _verify_session.get(
                 injected_url,
                 timeout=timeout,
                 allow_redirects=True,
-                headers=headers,
-                verify=False,
             )
 
         resp = await _run_in_thread(_do_request)
+        await asyncio.sleep(0.5)  # Add small delay between verify_bypass calls
     except Exception as exc:
         return BypassResult(evidence=f"Request error: {exc}", payload_used=payload)
 
