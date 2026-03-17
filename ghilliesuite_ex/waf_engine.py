@@ -456,10 +456,16 @@ async def verify_bypass(
     fp = fingerprint_waf(resp.status_code, resp_headers, body_snippet)
 
     # Determine bypass success
-    status_changed = resp.status_code != baseline_status and resp.status_code not in _WAF_BLOCK_CODES
-    waf_gone = not fp.detected
+    body_lower = body_snippet.lower()
+    challenge_keywords = ["verifying your connection", "cloudflare-nginx", "just a moment", "attention required"]
+    has_challenge = any(kw in body_lower for kw in challenge_keywords)
 
-    success = status_changed or waf_gone
+    if resp.status_code in {403, 429} or has_challenge:
+        success = False
+    else:
+        status_changed = resp.status_code != baseline_status and resp.status_code not in _WAF_BLOCK_CODES
+        waf_gone = not fp.detected
+        success = status_changed or waf_gone
 
     evidence_parts = [
         f"Status: {resp.status_code} (baseline: {baseline_status})",
