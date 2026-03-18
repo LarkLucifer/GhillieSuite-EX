@@ -29,6 +29,7 @@ dependencies = [
     "aiosqlite>=0.20",
     "nest-asyncio>=1.5",
     "playwright>=1.43",
+    "requests>=2.32",
 ]
 
 [project.scripts]

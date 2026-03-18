@@ -78,7 +78,7 @@ def hunt(
         help="Directory where request/response evidence files are saved.",
     ),
     max_loops: int = typer.Option(
-        5,
+        15,
         "--max-loops",
         help="Maximum number of agent decision loops.",
     ),
@@ -551,8 +551,6 @@ async def _async_hunt(
         _os.makedirs(_db_dir, exist_ok=True)
 
     result_summary = "Pipeline terminated early — see error log above."
-    report_path    = None
-
     async with StateDB(cfg.db_path, target=target) as db:
         supervisor = SupervisorAgent(
             db=db,
@@ -576,29 +574,7 @@ async def _async_hunt(
                 f"[dim]Continuing to report generation with findings collected so far.[/dim]"
             )
 
-        # ── Report Generation (always runs, even if agent crashed) ────────
-        console.print()
-        console.print(Rule("[bold]Generating HTML Report[/bold]", style="bright_blue"))
-        from ghilliesuite_ex.utils.reporter import HtmlReporter
-        reporter = HtmlReporter(db=db, ai_client=ai_client, console=console, config=cfg)
-
-        try:
-            from rich.status import Status
-            with Status("[blue]Consulting AI for plain-English summaries and rendering HTML report…[/blue]", console=console):
-                report_path = await reporter.generate(
-                    target=target,
-                    scope=scope_domains,
-                    output_dir=output_dir,
-                )
-        except Exception as _report_exc:
-            console.print(f"[bold red]⚠ Report generation failed: {_report_exc}[/bold red]")
-
     console.print(f"\n[bold bright_green]Hunt complete! {result_summary}[/bold bright_green]")
-    if report_path:
-        console.print(f"Report saved at: [bold underline cyan]file://{report_path.resolve()}[/bold underline cyan]\n")
-
-
-
 def _build_ai_client(config):
     """
     Construct the AI client using the auto-detected provider stored in cfg.

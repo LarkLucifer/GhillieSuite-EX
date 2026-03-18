@@ -455,6 +455,10 @@ def build_command(
         A fully-formed list[str] ready for asyncio.create_subprocess_exec.
     """
     spec = TOOL_REGISTRY[tool_name]
+    if spec.uses_output_file and output_file is None:
+        raise ValueError(f"{tool_name} requires output_file but none was provided")
+    if spec.uses_input_file and input_file is None:
+        raise ValueError(f"{tool_name} requires input_file but none was provided")
     out_str = str(output_file) if output_file else ""
     in_str  = str(input_file)  if input_file  else ""
     

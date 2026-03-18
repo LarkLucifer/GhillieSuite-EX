@@ -106,7 +106,7 @@ class BaseAgent(ABC):
                         messages.append({"role": "system", "content": system})
                     messages.append({"role": "user", "content": prompt})
                     response = await self.ai.chat.completions.create(
-                        model="gpt-4o-mini",
+                        model=self.cfg.openai_model,
                         messages=messages,
                         temperature=0.2,
                         timeout=timeout,

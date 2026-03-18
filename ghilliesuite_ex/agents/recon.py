@@ -321,8 +321,11 @@ class ReconAgent(BaseAgent):
                 url = str(item.get("url") or "")
                 if not url or not is_in_scope(url, self.scope):
                     continue
+                hostname = urlsplit(url).hostname or ""
+                if not hostname:
+                    continue
                 host = Host(
-                    domain=urlsplit(url).netloc,
+                    domain=hostname,
                     status_code=int(item.get("status_code") or 0),
                     server=str(item.get("server") or ""),
                     tech_stack=str(item.get("tech_stack") or ""),

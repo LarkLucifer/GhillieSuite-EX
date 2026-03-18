@@ -367,7 +367,7 @@ Reply with a JSON object containing exactly these three keys:
             elif hasattr(self.ai, "chat"):
                 # OpenAI
                 resp = await self.ai.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model=self.cfg.openai_model,
                     messages=[
                         {"role": "system", "content": _SYSTEM},
                         {"role": "user", "content": prompt},
