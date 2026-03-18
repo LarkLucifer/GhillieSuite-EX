@@ -436,6 +436,7 @@ async def verify_bypass(
     try:
         from ghilliesuite_ex.agents.base import _run_in_thread
         import asyncio
+        import random
 
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -449,14 +450,21 @@ async def verify_bypass(
         _verify_session.headers.update(headers)
 
         def _do_request():
+            rand_ua = random.choice([
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+            ])
             return _verify_session.get(
                 injected_url,
                 timeout=timeout,
                 allow_redirects=True,
+                headers={"User-Agent": rand_ua}
             )
 
         resp = await _run_in_thread(_do_request)
-        await asyncio.sleep(0.5)  # Add small delay between verify_bypass calls
+        await asyncio.sleep(random.uniform(0.7, 2.0))  # Add Jitter delay between verify_bypass calls
     except Exception as exc:
         return BypassResult(evidence=f"Request error: {exc}", payload_used=payload)
 
