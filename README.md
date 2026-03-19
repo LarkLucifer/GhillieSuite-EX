@@ -177,6 +177,36 @@ GhillieSuite-EX.sec hunt \
 Practical range: `--rate-limit 3` to `7` for brittle sessions. If you still see
 auth drop-offs or 429s, lower it further or refresh the cookie.
 
+**Cookie Troubleshooting (Quick Fixes)**
+If your authenticated scan fails after the first few requests, these are the
+most common causes:
+
+- **401/403 after initial success:** The session token rolled. Re-capture the
+  cookie and drop `--rate-limit` to slow churn.
+- **Immediate redirect to login (302/401):** The cookie was truncated. Make
+  sure you copied the full `Cookie` header and wrapped it correctly for your shell.
+- **Cloudflare interstitials / JS challenge pages:** Tokens are short-lived.
+  Refresh the cookie right before running and keep rate limits low.
+- **Weird parse errors or missing endpoints:** Hidden newlines from copy/paste.
+  Re-copy the cookie from DevTools in a single line.
+
+**DevTools Copy-Paste Helper (Chrome/Edge/Firefox)**
+Use one of these fast paths to grab a clean cookie string:
+
+1. **Network tab (most reliable):** Open DevTools → Network → select an authenticated
+   request → Request Headers → `Cookie` → copy the full value.
+2. **Application/Storage tab:** DevTools → Application (Chrome/Edge) or Storage (Firefox)
+   → Cookies → select the site → right-click the table → “Copy” → “Copy all.”
+
+Then paste it straight into your command:
+
+```bash
+GhillieSuite-EX.sec hunt \
+  --target app.example.com \
+  --scope scope_example.txt \
+  --cookies 'PASTE_COOKIE_VALUE_HERE'
+```
+
 ---
 
 ## Attack Vectors (2026 Edition)

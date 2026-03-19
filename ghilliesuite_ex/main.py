@@ -23,6 +23,7 @@ Available commands:
 from __future__ import annotations
 
 import asyncio
+import io
 import sys
 from pathlib import Path
 from typing import Optional
@@ -37,6 +38,37 @@ from ghilliesuite_ex.config import validate_config
 from ghilliesuite_ex.state.db import StateDB
 from ghilliesuite_ex.utils.scope import load_scope
 from ghilliesuite_ex.utils.ui import print_banner
+
+def _ensure_utf8_stdio() -> None:
+    """
+    Force UTF-8 stdout/stderr so rich/print never crash on non-ASCII output.
+    This prevents crashes on Linux shells using C/ASCII locales.
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+            continue
+        except Exception:
+            pass
+        try:
+            buffer = stream.buffer
+        except Exception:
+            continue
+        try:
+            setattr(
+                sys,
+                name,
+                io.TextIOWrapper(buffer, encoding="utf-8", errors="replace"),
+            )
+        except Exception:
+            pass
+
+
+_ensure_utf8_stdio()
+
 
 app = typer.Typer(
     name=__app_name__,
