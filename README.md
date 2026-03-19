@@ -114,7 +114,7 @@ Options:
   --disable-stealth     Ignore WAF/Commander stealth signals  [flag]
   --allow-redirects     httpx follows redirects during recon  [flag]
   --no-update-templates Skip nuclei -ut on startup            [flag]
-  --cookie / -c         Session cookie string (authenticated scanning)
+  --cookie / --cookies / -c  Session cookie string (authenticated scanning)
   --header              Custom HTTP header (e.g. Authorization: Bearer ...)
   --screenshots         Enable gowitness screenshots (optional)
 
@@ -122,6 +122,60 @@ GhillieSuite-EX.sec check-tools   Show binary availability
 GhillieSuite-EX.sec check-config  Validate .env + show detected AI provider
 GhillieSuite-EX.sec version       Show version
 ```
+
+---
+
+## How-to Guide: Massive Cookies in the Terminal
+
+Large session cookies (Cloudflare, CSRF-heavy apps, SSO, etc.) often contain characters
+that shells treat as special. Use the patterns below to avoid broken requests.
+
+**Terminal Escaping (Bash/Linux)**
+Always wrap complex cookies in single quotes so Bash does not split on spaces/semicolons
+or expand `$`/`!`/`&`/`?` characters:
+
+```bash
+GhillieSuite-EX.sec hunt \
+  --target app.example.com \
+  --scope scope_example.txt \
+  --cookies 'session=abc123; cf_bm=...; __Host-csrf=...; other=...'
+```
+
+If the cookie itself contains a single quote, close/open the quotes around it:
+
+```bash
+--cookies 'session=abc123; tricky=it'\''s-here; other=...'
+```
+
+**PowerShell Variables (Windows)**
+PowerShell is happiest when you assign the cookie to a variable first, then pass it:
+
+```powershell
+$cookie = "session=abc123; cf_bm=...; __Host-csrf=...; other=..."
+GhillieSuite-EX.sec hunt --target app.example.com --scope scope_example.txt --cookies $cookie
+```
+
+If your cookie contains `$`, either escape it with a backtick (`` `$ ``) or use single
+quotes in the assignment:
+
+```powershell
+$cookie = 'session=abc123; token=$VALUE; other=...'
+```
+
+**Token Rotation & Rate Limits**
+Rolling session tokens (e.g., `CF-BM`, `CSRF`, short-lived SSO) can invalidate quickly
+when you send too many requests. Reduce the scan velocity to keep sessions stable:
+
+```bash
+GhillieSuite-EX.sec hunt \
+  --target app.example.com \
+  --scope scope_example.txt \
+  --cookies 'session=abc123; cf_bm=...; __Host-csrf=...' \
+  --rate-limit 3
+```
+
+Practical range: `--rate-limit 3` to `7` for brittle sessions. If you still see
+auth drop-offs or 429s, lower it further or refresh the cookie.
 
 ---
 

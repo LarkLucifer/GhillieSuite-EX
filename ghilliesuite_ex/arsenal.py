@@ -275,7 +275,18 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
 
     "katana": ToolSpec(
         binary="katana",
-        base_cmd=["katana", "-u", "{target}", "-silent", "-depth", "3", "-jc"],
+        base_cmd=[
+            "katana", "-u", "{target}",
+            "-silent",
+            "-d", "3",
+            "-jc",
+            "-ct", "5m",
+            "-ef",
+            "js,css,png,jpg,jpeg,svg,woff,woff2,ico,webp,gif,map,mp4,pdf,"
+            "bmp,tif,tiff,ttf,otf,eot,mp3,wav,ogg,webm,m4a,m4v,avi,mov,mkv,"
+            "zip,rar,7z,tar,gz,tgz,bz2,iso,exe,dmg,apk",
+            "-iqp",
+        ],
         scope_flag="-u {target}",
         category="Recon",
         parser="katana",

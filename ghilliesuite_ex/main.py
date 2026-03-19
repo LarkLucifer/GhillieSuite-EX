@@ -150,7 +150,7 @@ def hunt(
     ),
     cookie: Optional[str] = typer.Option(
         None,
-        "--cookie", "-c",
+        "--cookie", "--cookies", "-c",
         help=(
             "Session cookie string injected into all active tools as -H 'Cookie: ...'.\n"
             "Example: --cookie 'session=abc123; csrf_token=xyz'\n"
