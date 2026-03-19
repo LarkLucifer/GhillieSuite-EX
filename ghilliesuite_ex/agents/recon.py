@@ -95,6 +95,24 @@ def _is_arjun_candidate(url: str) -> bool:
     return True
 
 
+def _get_arjun_base_path(url: str) -> str:
+    """Extract unique base path for Blitz deduplication."""
+    parts = urlsplit(url)
+    path = parts.path
+    if not path or path == "/":
+        return f"{parts.scheme}://{parts.netloc}/"
+    
+    # Remove last segment if it looks like a resource or ID
+    segments = [s for s in path.split("/") if s]
+    if segments:
+        last = segments[-1]
+        if "." in last or len(last) > 20: # skip filenames or long IDs
+            segments = segments[:-1]
+            
+    base_path = "/".join(segments)
+    return f"{parts.scheme}://{parts.netloc}/{base_path}"
+
+
 def _headers_from_flags(flags: list[str]) -> dict[str, str]:
     """Convert ['-H', 'Header: value', ...] into a headers dict."""
     headers: dict[str, str] = {}
@@ -483,9 +501,18 @@ class ReconAgent(BaseAgent):
         raw_targets = [u for u in raw_targets if is_in_scope(u, self.scope)]
         filtered_targets = [u for u in raw_targets if _is_arjun_candidate(u)]
         filtered_targets = list(dict.fromkeys(filtered_targets))
-        priority_targets = [u for u in filtered_targets if _is_arjun_priority(u)]
-        other_targets = [u for u in filtered_targets if u not in priority_targets]
-        arjun_targets = (priority_targets + other_targets)[:15]
+        # Arjun Blitz Deduplication: Group by base path
+        seen_bases: set[str] = set()
+        blitz_targets = []
+        for u in filtered_targets:
+            base = _get_arjun_base_path(u)
+            if base not in seen_bases:
+                seen_bases.add(base)
+                blitz_targets.append(u)
+        
+        priority_targets = [u for u in blitz_targets if _is_arjun_priority(u)]
+        other_targets = [u for u in blitz_targets if u not in priority_targets]
+        arjun_targets = (priority_targets + other_targets)[:20] # Increased cap for Blitz
         if arjun_targets:
             self.console.print("[cyan]  Phase 7 - arjun parameter discovery[/cyan]")
             _ARJUN_IN.write_text("\n".join(arjun_targets) + "\n", encoding="utf-8")
@@ -497,7 +524,7 @@ class ReconAgent(BaseAgent):
                 extra_args=["-t", "10"],
             )
             with Status("[cyan]Running arjun (list mode)...[/cyan]", console=self.console):
-                arjun_result = await run_tool_to_file(arjun_cmd, _ARJUN_OUT, timeout=timeout)
+                arjun_result = await run_tool_to_file(arjun_cmd, _ARJUN_OUT, timeout=300)
             parsed_rows: list[dict] = []
             if arjun_result.ok or arjun_result.output_file:
                 parsed_rows = parse_arjun(output_path=arjun_result.output_file or _ARJUN_OUT)
@@ -509,7 +536,7 @@ class ReconAgent(BaseAgent):
                     per_out = _TMP_DIR / f"arjun_out_{idx}.json"
                     per_cmd = ["arjun", "-u", url, "-oJ", str(per_out), "-t", "10"]
                     async with sem:
-                        per_res = await run_tool_to_file(per_cmd, per_out, timeout=timeout)
+                        per_res = await run_tool_to_file(per_cmd, per_out, timeout=300)
                     return per_out, per_res
 
                 with Status("[cyan]Running arjun (per-URL, concurrent)...[/cyan]", console=self.console):

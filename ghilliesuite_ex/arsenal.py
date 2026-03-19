@@ -306,14 +306,14 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
 
     "arjun": ToolSpec(
         binary="arjun",
-        base_cmd=["arjun", "-i", "{input_file}", "-oJ", "{output_file}"],
+        base_cmd=["arjun", "-i", "{input_file}", "-oJ", "{output_file}", "-t", "10"],
         scope_flag=None,
         category="Recon",
         parser="arjun",
         hitl_required=False,
         uses_output_file=True,
         uses_input_file=True,
-        description="Parameter discovery for URLs; outputs JSON parameter lists.",
+        description="Fast parameter discovery; uses 10 threads and JSON output.",
     ),
 
     "subzy": ToolSpec(
@@ -380,14 +380,15 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         binary="sqlmap",
         base_cmd=[
             "sqlmap", "-u", "{target}",
-            "--batch", "--level=2", "--risk=1",
+            "--batch", "--smart", "--threads=10",
+            "--keep-alive", "--timeout=10", "--retries=1",
             "--output-dir=.sqlmap_out", "--forms",
         ],
         scope_flag="-u {target}",
         category="Exploitation",
         parser="sqlmap",
         hitl_required=False,
-        description="SQL injection detection and exploitation — tests GET/POST params and forms.",
+        description="SQL injection 'Speedrun' mode: fast, smart, and multi-threaded.",
     ),
 
     "ffuf": ToolSpec(
