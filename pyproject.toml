@@ -30,6 +30,7 @@ dependencies = [
     "nest-asyncio>=1.5",
     "playwright>=1.43",
     "requests>=2.32",
+    "beautifulsoup4>=4.12",
 ]
 
 [project.scripts]
