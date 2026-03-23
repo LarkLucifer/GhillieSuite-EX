@@ -58,8 +58,31 @@ _MAX_SCREENSHOT_BYTES = 2 * 1024 * 1024  # 2 MB cap for inline HTML embedding
 _MAX_EVIDENCE_CHARS = 8000
 
 
+def _safe_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+            return value
+        except UnicodeEncodeError:
+            return value.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+    try:
+        text = str(value)
+    except Exception:
+        return ""
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+
+
 def _extract_evidence_paths(text: str) -> tuple[str, str]:
     """Extract evidence request/response file paths from a finding's evidence."""
+    text = _safe_text(text)
     req_path = ""
     res_path = ""
     for line in (text or "").splitlines():
@@ -136,10 +159,29 @@ class HtmlReporter:
         safe_target = target.replace(".", "_").replace("/", "_").replace(":", "")
         html_path = output_path / f"{safe_target}_{ts}.html"
 
-        findings:  list[Finding]  = await self.db.get_findings()
-        hosts:     list[Host]     = await self.db.get_hosts()
-        endpoints: list[Endpoint] = await self.db.get_endpoints()
-        screenshots: list[Screenshot] = await self.db.get_screenshots()
+        try:
+            findings: list[Finding] = await self.db.get_findings()
+        except Exception as exc:
+            self.console.print(f"[yellow]  ⚠ Failed to load findings: {exc}[/yellow]")
+            findings = []
+
+        try:
+            hosts: list[Host] = await self.db.get_hosts()
+        except Exception as exc:
+            self.console.print(f"[yellow]  ⚠ Failed to load hosts: {exc}[/yellow]")
+            hosts = []
+
+        try:
+            endpoints: list[Endpoint] = await self.db.get_endpoints()
+        except Exception as exc:
+            self.console.print(f"[yellow]  ⚠ Failed to load endpoints: {exc}[/yellow]")
+            endpoints = []
+
+        try:
+            screenshots: list[Screenshot] = await self.db.get_screenshots()
+        except Exception as exc:
+            self.console.print(f"[yellow]  ⚠ Failed to load screenshots: {exc}[/yellow]")
+            screenshots = []
 
         self.console.print(f"[cyan]  Generating AI summaries for {len(findings)} finding(s)…[/cyan]")
         enriched = await self._enrich_findings(findings, hosts)
@@ -179,7 +221,13 @@ class HtmlReporter:
             execution_flags=execution_flags,
         )
 
-        html_path.write_text(html_content, encoding="utf-8")
+        html_content = _safe_text(html_content)
+
+        try:
+            html_path.write_text(html_content, encoding="utf-8")
+        except Exception as exc:
+            self.console.print(f"[yellow]  ⚠ HTML write failed: {exc}[/yellow]")
+            raise
         self.console.print(f"  HTML: [underline]{html_path.resolve()}[/underline]")
         
         self._generate_bounty_draft(target, safe_target, enriched, output_path)
@@ -292,12 +340,14 @@ class HtmlReporter:
         enriched: list[dict[str, Any]] = []
 
         for f in findings:
-            if f.title not in title_cache:
+            safe_title = _safe_text(f.title)
+            if safe_title not in title_cache:
                 summary = await self._ai_summary(f)
-                title_cache[f.title] = summary
+                title_cache[safe_title] = summary
 
             # Match host for status code info
-            domain = f.target.split("//")[-1].split("/")[0].split(":")[0]
+            safe_target_for_domain = _safe_text(f.target)
+            domain = safe_target_for_domain.split("//")[-1].split("/")[0].split(":")[0]
             matched_host = next((h for h in hosts if h.domain == domain), None)
             host_status = matched_host.status_code if matched_host else ""
             host_tech = matched_host.tech_stack if matched_host else ""
@@ -311,19 +361,26 @@ class HtmlReporter:
             req_text = _read_text_safe(req_path) if req_path else ""
             res_text = _read_text_safe(res_path) if res_path else ""
 
+            safe_target = _safe_text(f.target)
+            safe_tool = _safe_text(f.tool)
+            safe_evidence = _safe_text(f.evidence)
+            safe_steps = _safe_text(f.reproducible_steps)
+            safe_raw = _safe_text(f.raw_output)
+            safe_timestamp = _safe_text(f.timestamp)
+
             enriched.append({
                 "id":                 f.id,
-                "tool":               f.tool,
-                "target":             f.target,
+                "tool":               safe_tool,
+                "target":             safe_target,
                 "severity":           sev_str,
-                "title":              f.title,
-                "evidence":           f.evidence,
-                "reproducible_steps": f.reproducible_steps,
-                "raw_output":         f.raw_output,
-                "timestamp":          f.timestamp,
-                "what_is_it":         title_cache[f.title].get("what_is_it", ""),
-                "impact":             title_cache[f.title].get("impact", ""),
-                "remediation":        title_cache[f.title].get("remediation", ""),
+                "title":              safe_title,
+                "evidence":           safe_evidence,
+                "reproducible_steps": safe_steps,
+                "raw_output":         safe_raw,
+                "timestamp":          safe_timestamp,
+                "what_is_it":         title_cache[safe_title].get("what_is_it", ""),
+                "impact":             title_cache[safe_title].get("impact", ""),
+                "remediation":        title_cache[safe_title].get("remediation", ""),
                 "host_status":        host_status,
                 "host_tech":          host_tech,
                 "evidence_request_path": req_path,
@@ -345,11 +402,16 @@ class HtmlReporter:
             "Be concise — 1-3 sentences max per field. No jargon, no CVE numbers. "
             "Under 'impact', if the vulnerability is BOLA/IDOR, explicitly explain which specific ID (e.g., user_id=123) should be tested for manipulation based on the evidence."
         )
+        title = _safe_text(f.title)
+        tool = _safe_text(f.tool)
+        severity = _safe_text(f.severity)
+        evidence = _safe_text(f.evidence)
+
         prompt = f"""
-Finding title: {f.title}
-Tool: {f.tool}
-Severity: {f.severity}
-Evidence: {f.evidence[:400] if f.evidence else 'N/A'}
+Finding title: {title}
+Tool: {tool}
+Severity: {severity}
+Evidence: {evidence[:400] if evidence else 'N/A'}
 
 Reply with a JSON object containing exactly these three keys:
 {{
@@ -399,7 +461,7 @@ Reply with a JSON object containing exactly these three keys:
 
 def _e(s: Any) -> str:
     """HTML-escape a value for safe inclusion in the template."""
-    return _html.escape(str(s or ""), quote=True)
+    return _html.escape(_safe_text(s), quote=True)
 
 
 def _render_html(
@@ -705,7 +767,7 @@ def _finding_card(f: dict[str, Any]) -> str:
     remediation = _e(f.get("remediation", ""))
     evidence    = _e(f.get("evidence",    "") or "N/A")
     steps       = _e(f.get("reproducible_steps", "") or "No steps provided.")
-    raw_out     = f.get("raw_output", "") or ""
+    raw_out     = _safe_text(f.get("raw_output", "") or "")
     # Truncate and escape raw output for display
     raw_display = _e(raw_out[:800]) if raw_out.strip() else ""
     req_path    = _e(f.get("evidence_request_path", "") or "")
@@ -713,16 +775,15 @@ def _finding_card(f: dict[str, Any]) -> str:
     req_text    = _e(f.get("evidence_request", "") or "")
     res_text    = _e(f.get("evidence_response", "") or "")
     tool_name   = f.get("tool", "")
-    target_url  = f.get("target", "")
+    target_url  = _e(f.get("target", ""))
     h_status    = f.get("host_status", "")
     h_tech      = f.get("host_tech", "")
     is_advisory = tool_name in _ADVISORY_TOOLS
 
     advisory_badge = '<span class="text-xs bg-purple-700 text-white px-2 py-0.5 rounded-full ml-2">Passive Advisory</span>' if is_advisory else ""
     verified_badge = '<span class="text-xs bg-red-600 border border-red-400 text-white px-2 py-0.5 rounded-full ml-2 font-bold shadow-[0_0_8px_rgba(220,38,38,0.8)]">VERIFIED</span>' if tool_name in ("dalfox", "sqlmap") or "BOLA/IDOR Detected" in _e(f.get('title','')) or "GraphQL Introspection" in _e(f.get('title','')) else ""
-    
-    status_str = f"HTTP {h_status}" if h_status else "Status Unknown"
-    tech_str = f" • Tech: {h_tech}" if h_tech else ""
+    status_str = _e(f"HTTP {h_status}") if h_status else _e("Status Unknown")
+    tech_str = _e(f" - Tech: {h_tech}") if h_tech else ""
 
     proof_block = f"""
             <div class="mt-3">
@@ -841,3 +902,5 @@ def _host_row(h: Host) -> str:
 
 def _empty_state(msg: str) -> str:
     return f'<div class="text-center py-12 text-gray-600 text-sm">{_e(msg)}</div>'
+
+

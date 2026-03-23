@@ -31,8 +31,31 @@ from .base import AgentResult, AgentTask, BaseAgent
 SEVERITY_ORDER = ["critical", "high", "medium", "low", "info"]
 
 
+def _safe_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+            return value
+        except UnicodeEncodeError:
+            return value.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+    try:
+        text = str(value)
+    except Exception:
+        return ""
+    try:
+        text.encode("utf-8")
+        return text
+    except UnicodeEncodeError:
+        return text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+
+
 def _extract_evidence_paths(text: str) -> tuple[str, str]:
     """Extract evidence request/response file paths from a finding's evidence text."""
+    text = _safe_text(text)
     req_path = ""
     res_path = ""
     for line in (text or "").splitlines():
@@ -103,14 +126,14 @@ class ReporterAgent(BaseAgent):
             "findings": [
                 {
                     "id": f.id,
-                    "tool": f.tool,
-                    "target": f.target,
-                    "severity": f.severity,
-                    "title": f.title,
-                    "evidence": f.evidence,
-                    "reproducible_steps": f.reproducible_steps,
-                    "raw_output_excerpt": f.raw_output[:500],
-                    "timestamp": f.timestamp,
+                    "tool": _safe_text(f.tool),
+                    "target": _safe_text(f.target),
+                    "severity": _safe_text(f.severity),
+                    "title": _safe_text(f.title),
+                    "evidence": _safe_text(f.evidence),
+                    "reproducible_steps": _safe_text(f.reproducible_steps),
+                    "raw_output_excerpt": _safe_text(f.raw_output)[:500],
+                    "timestamp": _safe_text(f.timestamp),
                     "evidence_request_path": _extract_evidence_paths(f.evidence)[0],
                     "evidence_response_path": _extract_evidence_paths(f.evidence)[1],
                 }
@@ -186,30 +209,38 @@ class ReporterAgent(BaseAgent):
             ]
             for i, f in enumerate(bucket, start=1):
                 req_path, res_path = _extract_evidence_paths(f.evidence)
+                title = _safe_text(f.title)
+                tool = _safe_text(f.tool)
+                target_v = _safe_text(f.target)
+                severity_v = _safe_text(f.severity)
+                timestamp_v = _safe_text(f.timestamp)
+                evidence_v = _safe_text(f.evidence or "N/A")
+                steps_v = _safe_text(f.reproducible_steps or "N/A")
+                raw_v = _safe_text(f.raw_output)[:500] if f.raw_output else "N/A"
                 md_lines += [
-                    f"### {i}. {f.title}",
+                    f"### {i}. {title}",
                     f"",
                     f"| Field | Value |",
                     f"|-------|-------|",
-                    f"| **Tool** | `{f.tool}` |",
-                    f"| **Target** | `{f.target}` |",
-                    f"| **Severity** | **{f.severity.upper()}** |",
-                    f"| **Timestamp** | {f.timestamp} |",
+                    f"| **Tool** | `{tool}` |",
+                    f"| **Target** | `{target_v}` |",
+                    f"| **Severity** | **{severity_v.upper()}** |",
+                    f"| **Timestamp** | {timestamp_v} |",
                     f"",
                     f"**Evidence:**",
                     f"```",
-                    f.evidence or "N/A",
+                    evidence_v,
                     f"```",
                     f"Evidence Request: `{req_path}`" if req_path else "",
                     f"Evidence Response: `{res_path}`" if res_path else "",
                     f"",
                     f"**Reproducible Steps:**",
                     f"",
-                    f.reproducible_steps or "N/A",
+                    steps_v,
                     f"",
                     f"**Raw Output (excerpt):**",
                     f"```",
-                    f.raw_output[:500] if f.raw_output else "N/A",
+                    raw_v,
                     f"```",
                     f"",
                     f"---",
