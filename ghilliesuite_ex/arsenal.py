@@ -75,6 +75,10 @@ _WAF_EVASION_STEALTH_ARGS: dict[str, list[str]] = {
     "sqlmap": ["--delay=2", "--random-agent", "--tamper=between,randomcase,space2comment"],
 }
 
+# SQLMap lethal extraction and WAF fallback arg sets
+SQLMAP_LETHAL_ARGS = ["--dbs"]
+SQLMAP_WAF_FALLBACK_ARGS = ["--tamper=space2comment,randomcase", "--random-agent"]
+
 
 def apply_stealth_args(tool_name: str, cmd: list[str], enabled: bool) -> list[str]:
     """
