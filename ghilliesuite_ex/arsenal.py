@@ -64,7 +64,7 @@ _NODEJS_WORDLIST = [
 # ── Stealth Mode Overrides ────────────────────────────────────────────────────
 # Applied when cfg.stealth_mode is True or build_command(..., stealth=True)
 _STEALTH_ARGS: dict[str, list[str]] = {
-    "nuclei": ["-rl", "10", "-c", "5", "-bs", "1", "-timeout", "5"],
+    "nuclei": ["-rl", "15", "-c", "5", "-bs", "1", "-timeout", "5"],
     "sqlmap": ["--delay=1", "--random-agent"],
     "ffuf":   ["-t", "5", "-p", "0.5"],
     "dirb":   ["-t", "5", "-p", "0.5"],
@@ -285,11 +285,11 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "-d", "3",
             "-jc",
             "-ct", "5m",
+            "-f", "qurl",
             "-ef",
             "js,css,png,jpg,jpeg,svg,woff,woff2,ico,webp,gif,map,mp4,pdf,"
             "bmp,tif,tiff,ttf,otf,eot,mp3,wav,ogg,webm,m4a,m4v,avi,mov,mkv,"
             "zip,rar,7z,tar,gz,tgz,bz2,iso,exe,dmg,apk",
-            "-iqp",
         ],
         scope_flag="-u {target}",
         category="Recon",
