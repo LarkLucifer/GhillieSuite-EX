@@ -420,9 +420,9 @@ async def verify_bypass(
         BypassResult with success flag and evidence.
     """
     try:
-        import requests as _requests
+        import curl_cffi.requests as _requests
     except ImportError:
-        return BypassResult(evidence="requests library not available")
+        return BypassResult(evidence="curl_cffi library not available")
 
     # Build the URL with the payload injected
     injected_url = _inject_payload(url, parameter, payload)
@@ -444,8 +444,16 @@ async def verify_bypass(
         # Connection pooling by keeping the session alive if this is called in a loop
         global _verify_session
         if '_verify_session' not in globals() or _verify_session is None:
-            _verify_session = _requests.Session()
+            _verify_session = _requests.Session(impersonate="chrome120")
             _verify_session.verify = False
+            
+            try:
+                from ghilliesuite_ex.config import cfg as _cfg
+                if getattr(_cfg, "proxy", None):
+                    proxy_url = _cfg.proxy
+                    _verify_session.proxies = {"http": proxy_url, "https": proxy_url}
+            except Exception:
+                pass
 
         _verify_session.headers.update(headers)
 

@@ -206,6 +206,12 @@ def hunt(
         help="Enable gowitness screenshots during recon (optional).",
         is_flag=True,
     ),
+    proxy: Optional[str] = typer.Option(
+        None,
+        "--proxy", "-p",
+        help="Global HTTP/SOCKS5 proxy for all tools (e.g. http://127.0.0.1:8080 or socks5://127.0.0.1:9050).",
+        show_default=False,
+    ),
     ai_planner: bool = typer.Option(
         False,
         "--ai-planner",
@@ -317,6 +323,7 @@ def hunt(
         disable_stealth=disable_stealth,
         cookie=cookie,
         header=header,
+        proxy=proxy,
         screenshots=screenshots,
         ai_planner=ai_planner,
         force_auto=force_auto,
@@ -359,6 +366,7 @@ async def _async_hunt(
     disable_stealth: bool,
     cookie: str | None,
     header: str | None,
+    proxy: str | None = None,
     screenshots: bool = False,
     ai_planner: bool = False,
     force_auto: bool = False,
@@ -396,6 +404,8 @@ async def _async_hunt(
         cfg.auth_cookie = cookie.strip()
     if header:
         cfg.auth_header = header.strip()
+    if proxy:
+        cfg.proxy = proxy.strip()
 
     cfg.enable_screenshots = bool(screenshots)
     cfg.ai_planner = bool(ai_planner)

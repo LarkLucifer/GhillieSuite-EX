@@ -189,6 +189,11 @@ class Config:
     auth_header: str = ""
     """Value of --header CLI flag. e.g. 'Authorization: Bearer eyJ...' """
 
+    proxy: str = field(
+        default_factory=lambda: os.getenv("GHILLIE_PROXY", "").strip()
+    )
+    """Global HTTP/SOCKS5 proxy (e.g., http://127.0.0.1:8080)."""
+
     # Optional screenshots (gowitness) — set at runtime by CLI
     enable_screenshots: bool = False
     """If True, enable gowitness screenshots during recon."""

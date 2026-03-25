@@ -506,6 +506,22 @@ def build_command(
     if extra_args:
         cmd.extend(extra_args)
 
+    # Inject global proxy if configured
+    try:
+        from ghilliesuite_ex.config import cfg as _cfg
+        if _cfg.proxy:
+            proxy_str = _cfg.proxy
+            if tool_name == "httpx":
+                cmd.extend(["-http-proxy", proxy_str])
+            elif tool_name in ("nuclei", "katana"):
+                cmd.extend(["-proxy", proxy_str])
+            elif tool_name in ("sqlmap", "dalfox"):
+                cmd.extend(["--proxy", proxy_str])
+            elif tool_name == "ffuf":
+                cmd.extend(["-x", proxy_str])
+    except Exception:
+        pass
+
     if tool_name == "nuclei":
         try:
             from ghilliesuite_ex.config import cfg as _cfg
