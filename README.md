@@ -1,7 +1,20 @@
-# GhillieSuite-EX — Advanced AI Pentesting Framework
+# GhillieSuite-EX — Enterprise Bug Bounty Orchestrator
 
-> **AI-automated penetration testing CLI for HackerOne bug bounty hunters.**  
-> Multi-agent · WAF-Resilient · Crash-Proof 4-Day Pipeline · HTML Reporting · Anti-False Positives
+> **Professional, AI-automated penetration testing CLI for elite bug bounty hunters.**  
+> Multi-agent · Anti-WAF TLS Spoofing · Proxy Routing · Crash-Proof · Zero False Positives
+
+---
+
+## 🌟 Enterprise Capabilities (2026 Upgrades)
+
+GhillieSuite-EX has evolved from a multi-tool wrapper into a **strict, evasion-focused enterprise orchestrator**:
+
+- **AI Triage Master (Zero False Positives):** Upgraded LLM Evaluator acts as a ruthless Triage Master, catching WAF block pages, ignoring static assets (`.js`/`.css`), and verifying payload sanitization (HTML-encoding) before elevating XSS/SQLi findings.
+- **Global Proxy Routing & IP Evasion:** Every underlying tool (`httpx`, `sqlmap`, `nuclei`, `dalfox`, `katana`) and Python engine dynamically routes traffic through a centralized `--proxy` argument. Integrates seamlessly with Tor or ScraperAPI to prevent ISP blacklisting.
+- **TLS/JA3 Fingerprint Spoofing:** Standard `requests` replaced with `curl_cffi`. All internal API and engine requests flawlessly impersonate Google Chrome (`chrome120`) to bypass Cloudflare and Akamai bot-defense checks.
+- **Behavioral WAF Evasion Engine:** Implements batched processing (max 200 URLs), async LLM exponential backoffs, randomized Jitter delays (0.7s - 2.0s), and rotating User-Agents for robust, interrupt-free WAF mutation scanning.
+- **Targeted Tool Execution:** SQLMap and Arjun execute with surgical precision—SQLMap triggers *only* on parameterized URLs (`?id=`), and Arjun scans *only* unique base paths to preserve bandwidth and stealth.
+- **Isolated Custom Agents (VaultScout & ProtoGhost):** Extensible architecture featuring dedicated VaultScout (deep git/env secret scanning) and ProtoGhost (Playwright-driven Prototype Pollution sandbox verification).
 
 ---
 
@@ -116,6 +129,7 @@ Options:
   --no-update-templates Skip nuclei -ut on startup            [flag]
   --cookie / --cookies / -c  Session cookie string (authenticated scanning)
   --header              Custom HTTP header (e.g. Authorization: Bearer ...)
+  --proxy / -p          Global HTTP/SOCKS5 proxy (e.g. socks5://127.0.0.1:9050)
   --screenshots         Enable gowitness screenshots (optional)
 
 GhillieSuite-EX.sec check-tools   Show binary availability
@@ -245,7 +259,7 @@ All discovered findings pass through an `httpx` validation layer. 404 endpoints 
 
 ### Deep Research & Execution (Tier 0-9 Attacks)
 - **4-Stage Crash-Proof Pipeline**: The `ExploitAgent` strictly executes Recon → VulnScan → Contextual Exploitation → Advanced Logic. Every stage is wrapped in a global exception handler, guaranteeing a 100% stable 4-day unattended run.
-- **WAF Resilience**: The built-in **WAF Evasion Engine** (`--waf-evasion`) fingerprints over 30 WAF vendors (Cloudflare, Akamai, Imperva, etc.) and generates deterministic payload mutations targeted at the specific firewall. For native tool execution, `httpx` and `nuclei` use rotated user-agents, request retries, strict rate limits (`-rl 150`), and fast-fail request timeouts (`-timeout 5`) to bypass active blocklisting. Add `--stealth` to apply conservative per-tool limits.
+- **Enterprise WAF & IP Resilience**: Integrating `curl_cffi` for perfect Google Chrome TLS/JA3 impersonation, alongside rotating User-Agents and Jitter delays. The built-in **WAF Evasion Engine** (`--waf-evasion`) fingerprints over 30 WAF vendors and mutates payloads intelligently. A global `--proxy` argument cascades to all subprocesses (sqlmap, nuclei, dalfox) to prevent ISP blacklisting and allow endless IP rotation.
 - **Cloud Metadata SSRF**: SSRF-prone endpoints are dynamically injected with AWS/GCP/Azure payloads (e.g., `169.254.169.254/latest/meta-data`). Responses are flagged if they contain cloud credentials or IAM profiles.
 - **Cache Poisoning**: Unkeyed headers (`X-Forwarded-Host`, `X-Host`) are sent with canary hostnames to verify reflection and edge cache pollution vulnerabilities.
 - **Prototype Pollution 2.0**: JS sinks are dynamically tested in a headless `playwright` sandbox to actively verify standard payload injections via `Object.assign`. Successfully poisoned objects are auto-promoted to critical severity with a VERIFIED label.
