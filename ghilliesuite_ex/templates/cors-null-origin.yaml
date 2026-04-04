@@ -1,0 +1,27 @@
+id: gs-cors-null-origin
+info:
+  name: CORS Misconfiguration - Null Origin Accepted
+  author: GhillieSuite-EX
+  severity: high
+  description: |
+    The server accepts null Origin with credentials enabled.
+    Sandboxed iframes and data: URIs send Origin: null, enabling
+    cross-origin attacks from attacker pages.
+  tags: cors,misconfig,bb-custom
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+    headers:
+      Origin: "null"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "Access-Control-Allow-Origin: null"
+      - type: word
+        part: header
+        words:
+          - "Access-Control-Allow-Credentials: true"

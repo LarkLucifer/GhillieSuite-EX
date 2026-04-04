@@ -1,0 +1,42 @@
+id: gs-exposed-backup-files
+info:
+  name: Exposed Backup and Configuration Files
+  author: GhillieSuite-EX
+  severity: high
+  description: |
+    Backup or configuration files are publicly accessible, potentially
+    exposing source code, database dumps, credentials, and internal
+    application logic.
+  tags: exposure,backup,bb-custom
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/backup.sql"
+      - "{{BaseURL}}/backup.zip"
+      - "{{BaseURL}}/backup.tar.gz"
+      - "{{BaseURL}}/database.sql"
+      - "{{BaseURL}}/dump.sql"
+      - "{{BaseURL}}/db.sql"
+      - "{{BaseURL}}/site.sql"
+      - "{{BaseURL}}/data.sql"
+      - "{{BaseURL}}/wp-config.php.bak"
+      - "{{BaseURL}}/wp-config.bak"
+      - "{{BaseURL}}/config.php.bak"
+      - "{{BaseURL}}/web.config.bak"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: dsl
+        dsl:
+          - "len(body) > 100"
+      - type: word
+        negative: true
+        words:
+          - "<html"
+          - "<!DOCTYPE"
+          - "Page Not Found"
+          - "404"

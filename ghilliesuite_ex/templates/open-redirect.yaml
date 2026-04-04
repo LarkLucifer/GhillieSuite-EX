@@ -1,0 +1,42 @@
+id: gs-open-redirect
+info:
+  name: Open Redirect - Common Parameters
+  author: GhillieSuite-EX
+  severity: medium
+  description: |
+    Tests common redirect parameters for open redirect vulnerabilities.
+    Open redirects can be chained with OAuth flows for account takeover
+    or used in phishing campaigns.
+  tags: redirect,bb-custom
+  reference:
+    - https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}?url=https://evil.com"
+      - "{{BaseURL}}?redirect=https://evil.com"
+      - "{{BaseURL}}?next=https://evil.com"
+      - "{{BaseURL}}?return=https://evil.com"
+      - "{{BaseURL}}?returnUrl=https://evil.com"
+      - "{{BaseURL}}?redirect_uri=https://evil.com"
+      - "{{BaseURL}}?continue=https://evil.com"
+      - "{{BaseURL}}?dest=https://evil.com"
+      - "{{BaseURL}}?go=https://evil.com"
+      - "{{BaseURL}}?target=https://evil.com"
+      - "{{BaseURL}}?rurl=https://evil.com"
+      - "{{BaseURL}}?callback=https://evil.com"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 301
+          - 302
+          - 303
+          - 307
+          - 308
+      - type: word
+        part: header
+        words:
+          - "evil.com"

@@ -1,0 +1,31 @@
+id: gs-exposed-git-config
+info:
+  name: Exposed Git Configuration
+  author: GhillieSuite-EX
+  severity: high
+  description: |
+    The .git/config file is accessible, exposing repository configuration
+    including remote URLs which may contain credentials or reveal internal
+    infrastructure. Full source code extraction may be possible.
+  tags: exposure,config,bb-custom
+  reference:
+    - https://blog.sweepatic.com/git-directory-exposure/
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/config"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "[core]"
+          - "[remote"
+        condition: or
+      - type: word
+        negative: true
+        words:
+          - "<html"

@@ -131,10 +131,10 @@ class Config:
         default_factory=lambda: os.getenv("FAST_NUCLEI", "0").strip() in ("1", "true", "yes", "on")
     )
     nuclei_rate_limit: int = field(
-        default_factory=lambda: int(os.getenv("NUCLEI_RATE_LIMIT", "150"))
+        default_factory=lambda: int(os.getenv("NUCLEI_RATE_LIMIT", "20"))
     )
     nuclei_concurrency: int = field(
-        default_factory=lambda: int(os.getenv("NUCLEI_CONCURRENCY", "50"))
+        default_factory=lambda: int(os.getenv("NUCLEI_CONCURRENCY", "10"))
     )
     nuclei_http_timeout: int = field(
         default_factory=lambda: int(os.getenv("NUCLEI_HTTP_TIMEOUT", "5"))
@@ -244,6 +244,10 @@ class Config:
 
     # ── Automation — set at runtime by the CLI --force-auto flag
     force_auto: bool = False
+    turbo_mode: bool = False
+    recon_jitter: bool = True
+
+
     """
     If True, all hitl_prompt() calls are silently approved.
     USE WITH EXTREME CAUTION — only on pre-authorised targets.

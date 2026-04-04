@@ -139,6 +139,8 @@ async def _probe_url(
 ) -> dict[str, str | int] | None:
     """Probe a URL for liveness and return basic metadata."""
     async with sem:
+        if getattr(global_cfg, "recon_jitter", True) and not getattr(global_cfg, "turbo_mode", False):
+            await asyncio.sleep(random.uniform(0.5, 1.5))
         try:
             req_headers = dict(client.headers)
             req_headers["User-Agent"] = random.choice(_USER_AGENTS)
@@ -245,6 +247,36 @@ class ReconAgent(BaseAgent):
         else:
             self.console.print("[dim]dnsx: skipped (no new domains)[/dim]")
 
+        # Phase 2.5: subzy (Subdomain Takeover - delta-only)
+        subzy_added = 0
+        if dnsx_targets:
+            self.console.print(f"[cyan]  Phase 2.5 - subzy takeover check on {len(dnsx_targets)} host(s)[/cyan]")
+            subzy_cmd = build_command("subzy", target, input_file=_DNSX_IN, output_file=_TMP_DIR / "subzy_out.json")
+            with Status("[cyan]Running subzy...[/cyan]", console=self.console):
+                subzy_result = await run_tool_to_file(subzy_cmd, _TMP_DIR / "subzy_out.json", timeout=timeout)
+            
+            if subzy_result.ok or subzy_result.output_file:
+                rows = get_parser("subzy")(output_path=subzy_result.output_file or (_TMP_DIR / "subzy_out.json"))
+                for row in rows:
+                    # Logic to insert takeover finding
+                    if row.get("vulnerable"):
+                        from ghilliesuite_ex.state.models import Finding
+                        await self.db.insert_finding(Finding(
+                            tool="subzy",
+                            target=row["url"],
+                            severity="high",
+                            title=f"Subdomain Takeover Detected — {row.get('service')}",
+                            evidence=f"Service: {row.get('service')}\nDetails: {row.get('raw')}",
+                            reproducible_steps=f"1. Host: {row['url']}\n2. Fingerprint: {row.get('service')}\n3. Verify: visit manually.",
+                            raw_output=row.get("raw", "")
+                        ))
+                        subzy_added += 1
+                tool_result_panel(
+                    self.console, "subzy",
+                    subzy_cmd, subzy_result.ok or bool(subzy_result.output_file),
+                    f"Check complete - found {subzy_added} potential takeover(s)",
+                )
+
         # Phase 3: naabu (delta-only)
         service_count = 0
         services: list[Service] = []
@@ -313,7 +345,9 @@ class ReconAgent(BaseAgent):
         if httpx_delta:
             self.console.print("[cyan]  Phase 4 - httpx probing live services[/cyan]")
             headers = _headers_from_flags(auth_headers)
-            sem = asyncio.Semaphore(30)
+            # Lower concurrency to 10 for home router stability (bypassed if turbo)
+            max_concurrency = 50 if self.cfg.turbo_mode else 10
+            sem = asyncio.Semaphore(max_concurrency)
             async with httpx.AsyncClient(
                 verify=False,
                 timeout=10.0,
@@ -556,10 +590,14 @@ class ReconAgent(BaseAgent):
                     continue
                 if not is_in_scope(url, self.scope):
                     continue
-                params_str = ",".join(params)
+                
+                params_str = ",".join(sorted(set(params)))
+                # Update existing endpoint or insert new one with these params
                 await self.db.update_endpoint_params(url, params_str)
+                # Ensure it exists in DB (in case update_endpoint_params found nothing to update)
                 ep = Endpoint(url=url, params=params_str, source_tool="arjun")
                 await self.db.insert_endpoint(ep)
+                
                 items_added += 1
                 arjun_urls_added += 1
 

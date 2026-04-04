@@ -154,7 +154,7 @@ def _case_swap(payload: str) -> str:
 def _double_url_encode(payload: str) -> str:
     """Double URL-encode special characters: < becomes %253C."""
     first_pass = urllib.parse.quote(payload, safe="")
-    return first_pass.replace("%", "%25").replace("%2525", "%25")
+    return urllib.parse.quote(first_pass, safe="")
 
 
 def _unicode_escape(payload: str) -> str:
@@ -444,7 +444,10 @@ async def verify_bypass(
         # Connection pooling by keeping the session alive if this is called in a loop
         global _verify_session
         if '_verify_session' not in globals() or _verify_session is None:
-            _verify_session = _requests.Session()
+            try:
+                _verify_session = _requests.Session(impersonate="chrome120")
+            except TypeError:
+                _verify_session = _requests.Session()
             _verify_session.verify = False
 
         _verify_session.headers.update(headers)

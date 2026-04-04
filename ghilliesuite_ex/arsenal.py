@@ -131,6 +131,37 @@ def apply_stealth_args(tool_name: str, cmd: list[str], enabled: bool) -> list[st
     return cleaned
 
 
+def apply_turbo_args(tool_name: str, cmd: list[str], enabled: bool) -> list[str]:
+    """
+    Boost performance flags for VPS/Data Center environments.
+    """
+    if not enabled:
+        return list(cmd)
+
+    # Simple scaling: if turbo is on, we swap the safe defaults for aggressive ones
+    turbo_map = {
+        "httpx": [("-rl", "15", "100")],
+        "ffuf":  [("-t", "10", "60")],
+        "arjun": [("-t", "5", "20")],
+        "sqlmap": [("--threads=3", "--threads=10")],
+    }
+
+    if tool_name not in turbo_map:
+        return list(cmd)
+
+    new_cmd = list(cmd)
+    for target_flag, old_val, new_val in [ (x[0], x[1], x[2]) if len(x)==3 else (x[0], None, x[1]) for x in turbo_map[tool_name] ]:
+        for i, tok in enumerate(new_cmd):
+            if old_val: # Pair flag (e.g. -rl 15)
+                if tok == target_flag and i+1 < len(new_cmd) and new_cmd[i+1] == old_val:
+                    new_cmd[i+1] = new_val
+            else: # Single flag (e.g. --threads=3)
+                if tok == target_flag:
+                    new_cmd[i] = new_val
+    
+    return new_cmd
+
+
 def _apply_nuclei_tuning(
     cmd: list[str],
     rate_limit: int | None,
@@ -264,7 +295,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "-silent", "-status-code", "-title", "-tech-detect",
             "-random-agent",       # WAF bypass: rotate User-Agent per request
             "-retries", "2",       # retry failed probes instead of silently dropping
-            "-rl", "50",           # rate-limit to 50 req/s — avoids 429/WAF blocks
+            "-rl", "15",           # rate-limit to 15 req/s — SAFE for home routers
             "-json", "-o", "{output_file}",
         ],
         # httpx reads from -l file; scope enforced by feeding only in-scope hosts
@@ -310,7 +341,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
 
     "arjun": ToolSpec(
         binary="arjun",
-        base_cmd=["arjun", "-i", "{input_file}", "-oJ", "{output_file}", "-t", "10"],
+        base_cmd=["arjun", "-i", "{input_file}", "-oJ", "{output_file}", "-t", "5"],
         scope_flag=None,
         category="Recon",
         parser="arjun",
@@ -350,18 +381,27 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         binary="nuclei",
         base_cmd=[
             "nuclei", "-u", "{target}",
-            "-tags", "cve,ssrf,lfi,misconfig,exposure,graphql",  # targeted high-signal templates only
-            "-severity", "medium,high,critical",
+            # Comprehensive bug-bounty tag set — covers OWASP Top 10 + BB favorites
+            "-tags", (
+                "cve,ssrf,lfi,misconfig,exposure,graphql,"
+                "takeover,rce,injection,xss,cors,redirect,"
+                "default-login,token,auth-bypass,crlf,"
+                "header-injection,file-upload,panel,login,"
+                "tech,disclosure,backup,config,debug,"
+                "unauth,idor,sqli,ssti,xxe,open-redirect"
+            ),
+            "-severity", "low,medium,high,critical",
             "-timeout", "5",  # fail fast on tarpits
-            "-rl", "150",     # rate-limit to 150 req/s ? avoids WAF/IDS triggers
-            "-c", "50",       # concurrency: 50 parallel template checks
+            # WARNING: Do not increase rate limit above 5 req/s to prevent home router crash and ISP ban
+            "-rl", "5",       # rate-limit to 5 req/s — safe for home networks
+            "-c", "5",        # concurrency: 5 parallel template checks
             "-silent", "-j",
         ],
         scope_flag="-u {target}",
         category="VulnScan",
         parser="nuclei",
         hitl_required=False,  # HitL only for critical findings — handled in ExploitAgent
-        description="Template-based vulnerability scanner; targeted to CVE/SSRF/LFI/misconfig/graphql tags. Rate-limited for stealth.",
+        description="Template-based vulnerability scanner; comprehensive tags for CVE/XSS/SSRF/LFI/RCE/takeover/misconfig/auth-bypass. Rate-limited to 5 req/s for stealth.",
     ),
 
     # ── Active Exploitation (HitL required) ───────────────────────────────────
@@ -371,20 +411,21 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         base_cmd=[
             "dalfox", "file", "{target}", 
             "--silence", "--format", "json", "-o", "{output_file}", "-w", "50",
-            "--skip-bav", "--skip-mining-dom", "--skip-mining-dict"
+            # NOTE: --skip-mining-dom removed to enable DOM XSS detection (BB favorite)
+            "--skip-bav", "--skip-mining-dict"
         ],
         scope_flag=None,
         category="Exploitation",
         parser="dalfox",
         hitl_required=False,
-        description="XSS scanner and exploitation tool — discovers reflected, stored, and DOM XSS (Bulk Mode).",
+        description="XSS scanner and exploitation tool — discovers reflected, stored, and DOM XSS (Bulk Mode). DOM mining enabled.",
     ),
 
     "sqlmap": ToolSpec(
         binary="sqlmap",
         base_cmd=[
             "sqlmap", "-u", "{target}",
-            "--batch", "--smart", "--threads=10",
+            "--batch", "--smart", "--threads=3",
             "--keep-alive", "--timeout=10", "--retries=1",
             "--output-dir=.sqlmap_out", "--forms",
         ],
@@ -403,7 +444,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "-u", "{target}/FUZZ",
             "-of", "json", "-o", "{output_file}",
             "-mc", "200,204,301,302,307,401,403",
-            "-t", "40",
+            "-t", "10",
             "-s",  # silent
         ],
         scope_flag=None,
@@ -533,6 +574,10 @@ def build_command(
             )
         except Exception:
             pass
+        # Inject custom GhillieSuite templates alongside community templates
+        _custom_tpl_dir = Path(__file__).parent / "templates"
+        if _custom_tpl_dir.is_dir() and any(_custom_tpl_dir.glob("*.yaml")):
+            cmd.extend(["-t", str(_custom_tpl_dir)])
 
     if allow_redirects is None:
         try:
@@ -553,6 +598,14 @@ def build_command(
 
     if stealth:
         cmd = apply_stealth_args(tool_name, cmd, enabled=True)
+
+    # Inject turbo scaling if enabled
+    try:
+        from ghilliesuite_ex.config import cfg as _cfg
+        if _cfg.turbo_mode:
+            cmd = apply_turbo_args(tool_name, cmd, enabled=True)
+    except Exception:
+        pass
 
     return cmd
 

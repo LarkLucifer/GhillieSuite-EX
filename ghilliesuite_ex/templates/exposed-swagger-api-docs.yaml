@@ -1,0 +1,42 @@
+id: gs-exposed-swagger-api-docs
+info:
+  name: Exposed API Documentation (Swagger/OpenAPI)
+  author: GhillieSuite-EX
+  severity: medium
+  description: |
+    API documentation endpoints are publicly accessible, revealing
+    all API routes, parameters, authentication schemes, and data models.
+    This information allows attackers to map the full attack surface.
+  tags: exposure,misconfig,bb-custom
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/swagger.json"
+      - "{{BaseURL}}/swagger.yaml"
+      - "{{BaseURL}}/swagger-ui.html"
+      - "{{BaseURL}}/swagger-ui/"
+      - "{{BaseURL}}/api-docs"
+      - "{{BaseURL}}/v2/api-docs"
+      - "{{BaseURL}}/v3/api-docs"
+      - "{{BaseURL}}/openapi.json"
+      - "{{BaseURL}}/openapi.yaml"
+      - "{{BaseURL}}/redoc"
+      - "{{BaseURL}}/api/docs"
+      - "{{BaseURL}}/docs/api"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "\"swagger\""
+          - "\"openapi\""
+          - "\"paths\""
+          - "\"info\""
+          - "swagger-ui"
+          - "Swagger UI"
+          - "redoc"
+        condition: or

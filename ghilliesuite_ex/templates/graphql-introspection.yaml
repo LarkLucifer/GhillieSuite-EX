@@ -1,0 +1,44 @@
+id: gs-graphql-introspection
+info:
+  name: GraphQL Introspection Enabled
+  author: GhillieSuite-EX
+  severity: medium
+  description: |
+    GraphQL introspection is enabled, allowing attackers to query the
+    full schema including all types, fields, mutations, and subscriptions.
+    This reveals the complete API surface for targeted attacks.
+  tags: graphql,misconfig,bb-custom
+  reference:
+    - https://graphql.org/learn/introspection/
+
+http:
+  - raw:
+      - |
+        POST {{BaseURL}}/graphql HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+        {"query":"{ __schema { types { name fields { name } } } }"}
+      - |
+        POST {{BaseURL}}/api/graphql HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+        {"query":"{ __schema { types { name fields { name } } } }"}
+      - |
+        POST {{BaseURL}}/gql HTTP/1.1
+        Host: {{Hostname}}
+        Content-Type: application/json
+
+        {"query":"{ __schema { types { name fields { name } } } }"}
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "\"__schema\""
+          - "\"types\""
+        condition: and

@@ -1,0 +1,42 @@
+id: gs-error-page-disclosure
+info:
+  name: Verbose Error Page Information Disclosure
+  author: GhillieSuite-EX
+  severity: low
+  description: |
+    The application returns verbose error pages that disclose internal
+    information such as stack traces, framework versions, file paths,
+    database details, and server configuration.
+  tags: disclosure,misconfig,bb-custom
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/doesnotexist_ghilliesuite_404_test"
+      - "{{BaseURL}}/'\"<>{{}}test"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 400
+          - 403
+          - 404
+          - 500
+      - type: word
+        words:
+          - "Traceback (most recent call last)"
+          - "at java."
+          - "at org."
+          - "Microsoft .NET Framework"
+          - "ASP.NET"
+          - "Server Error in"
+          - "stack trace"
+          - "Debug Mode"
+          - "DJANGO_SETTINGS_MODULE"
+          - "Laravel"
+          - "Symfony"
+          - "Rails.root"
+          - "X-Powered-By"
+          - "phpinfo()"
+        condition: or

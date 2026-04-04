@@ -1,0 +1,43 @@
+id: gs-exposed-env-file
+info:
+  name: Exposed .env File
+  author: GhillieSuite-EX
+  severity: high
+  description: |
+    The .env file is publicly accessible and may contain database credentials,
+    API keys, secret keys, and other sensitive configuration values.
+  tags: exposure,config,bb-custom
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/.env.local"
+      - "{{BaseURL}}/.env.production"
+      - "{{BaseURL}}/.env.backup"
+      - "{{BaseURL}}/.env.bak"
+      - "{{BaseURL}}/.env.old"
+      - "{{BaseURL}}/.env.save"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "DB_PASSWORD"
+          - "DB_HOST"
+          - "APP_KEY"
+          - "SECRET_KEY"
+          - "API_KEY"
+          - "AWS_SECRET"
+          - "MAIL_PASSWORD"
+          - "DATABASE_URL"
+          - "REDIS_PASSWORD"
+        condition: or
+      - type: word
+        negative: true
+        words:
+          - "<html"
+          - "<!DOCTYPE"

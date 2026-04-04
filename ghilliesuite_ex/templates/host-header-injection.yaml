@@ -1,0 +1,29 @@
+id: gs-host-header-injection
+info:
+  name: Host Header Injection - Poisoned Redirect
+  author: GhillieSuite-EX
+  severity: medium
+  description: |
+    The server uses the Host header value in redirect Location headers
+    or HTML content, enabling password reset poisoning, cache poisoning,
+    and SSRF via Host header manipulation.
+  tags: header-injection,misconfig,bb-custom
+  reference:
+    - https://portswigger.net/web-security/host-header
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+    headers:
+      Host: "evil-attacker.com"
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "evil-attacker.com"
+      - type: word
+        part: body
+        words:
+          - "evil-attacker.com"

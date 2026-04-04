@@ -1,0 +1,37 @@
+id: gs-security-headers-missing
+info:
+  name: Missing Security Headers
+  author: GhillieSuite-EX
+  severity: info
+  description: |
+    Critical security headers are missing from the response.
+    Missing headers may indicate misconfiguration exploitable for
+    clickjacking, MIME sniffing, or XSS attacks.
+  tags: misconfig,header,bb-custom
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+    matchers-condition: or
+    matchers:
+      - type: word
+        part: header
+        negative: true
+        words:
+          - "X-Frame-Options"
+      - type: word
+        part: header
+        negative: true
+        words:
+          - "X-Content-Type-Options"
+      - type: word
+        part: header
+        negative: true
+        words:
+          - "Strict-Transport-Security"
+      - type: word
+        part: header
+        negative: true
+        words:
+          - "Content-Security-Policy"

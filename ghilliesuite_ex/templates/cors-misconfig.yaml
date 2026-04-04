@@ -1,0 +1,33 @@
+id: gs-cors-misconfiguration
+info:
+  name: CORS Misconfiguration - Arbitrary Origin Reflection
+  author: GhillieSuite-EX
+  severity: high
+  description: |
+    The server reflects the Origin header in Access-Control-Allow-Origin
+    with Access-Control-Allow-Credentials: true, allowing cross-origin
+    credential theft from any attacker-controlled domain.
+  tags: cors,misconfig,bb-custom
+  reference:
+    - https://portswigger.net/web-security/cors
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+    headers:
+      Origin: "https://evil-attacker.com"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: header
+        words:
+          - "Access-Control-Allow-Origin: https://evil-attacker.com"
+      - type: word
+        part: header
+        words:
+          - "Access-Control-Allow-Credentials: true"
+    extractors:
+      - type: kval
+        kval:
+          - access_control_allow_origin

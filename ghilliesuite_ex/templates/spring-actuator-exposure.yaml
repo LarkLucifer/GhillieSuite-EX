@@ -1,0 +1,36 @@
+id: gs-spring-actuator-exposure
+info:
+  name: Spring Boot Actuator Endpoints Exposed
+  author: GhillieSuite-EX
+  severity: high
+  description: |
+    Spring Boot Actuator endpoints are publicly accessible, exposing
+    application internals including environment variables, configuration
+    properties, heap dumps, and thread dumps. The /actuator/env endpoint
+    may contain database passwords and API keys.
+  tags: exposure,misconfig,spring,bb-custom
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/actuator"
+      - "{{BaseURL}}/actuator/env"
+      - "{{BaseURL}}/actuator/health"
+      - "{{BaseURL}}/actuator/configprops"
+      - "{{BaseURL}}/actuator/mappings"
+      - "{{BaseURL}}/actuator/beans"
+      - "{{BaseURL}}/actuator/heapdump"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "\"_links\""
+          - "\"status\""
+          - "\"propertySources\""
+          - "\"contexts\""
+          - "\"beans\""
+        condition: or

@@ -287,6 +287,13 @@ def hunt(
         help="JS Deep Inspection: LLM verification timeout (seconds).",
         show_default=False,
     ),
+    turbo: bool = typer.Option(
+        False,
+        "--turbo",
+        help="Enable High-Speed mode (Bypass Safe-by-Default limits for VPS/Data Center).",
+        is_flag=True,
+        rich_help_panel="Automation",
+    ),
 ) -> None:
     """
     Launch a full AI-driven bug bounty hunt against TARGET.
@@ -335,6 +342,7 @@ def hunt(
         js_snippet_len=js_snippet_len,
         js_http_timeout=js_http_timeout,
         js_llm_timeout=js_llm_timeout,
+        turbo=turbo,
     )
 
     try:
@@ -378,6 +386,7 @@ async def _async_hunt(
     js_snippet_len: int | None = None,
     js_http_timeout: float | None = None,
     js_llm_timeout: float | None = None,
+    turbo: bool = False,
 ) -> None:
     """Async implementation of the hunt command."""
     from ghilliesuite_ex.config import cfg, validate_config
@@ -479,6 +488,11 @@ async def _async_hunt(
         cfg.js_http_timeout = js_http_timeout
     if js_llm_timeout is not None:
         cfg.js_llm_timeout = js_llm_timeout
+
+    cfg.turbo_mode = turbo
+
+    if turbo:
+        console.print("[bold red]TURBO MODE ACTIVE[/bold red] [dim]— bypassing safe limits for high-speed scanning[/dim]")
 
     console.print(
         "[bold cyan]JS Deep Inspection config:[/bold cyan] "

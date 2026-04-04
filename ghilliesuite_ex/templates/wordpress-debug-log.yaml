@@ -1,0 +1,36 @@
+id: gs-wordpress-debug-log
+info:
+  name: WordPress Debug Log Exposed
+  author: GhillieSuite-EX
+  severity: high
+  description: |
+    WordPress debug.log is publicly accessible, potentially exposing
+    database errors with credentials, file paths, PHP warnings with
+    full stack traces, and plugin/theme vulnerabilities.
+  tags: exposure,wordpress,bb-custom
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/wp-content/debug.log"
+      - "{{BaseURL}}/debug.log"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "PHP"
+          - "WordPress"
+          - "Fatal error"
+          - "Warning:"
+          - "Notice:"
+          - "Stack trace"
+        condition: or
+      - type: word
+        negative: true
+        words:
+          - "<html"
+          - "<!DOCTYPE"

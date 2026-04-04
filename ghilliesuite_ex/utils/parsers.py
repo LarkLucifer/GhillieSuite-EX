@@ -66,9 +66,13 @@ _AI_TECH_KEYWORDS: tuple[str, ...] = (
 
 
 # ── Third-Party & CDN Denylist ────────────────────────────────────────────────
+# NOTE: wp-content/plugins and /assets/ intentionally NOT blacklisted:
+#   - wp-content/plugins is the #1 attack surface for WordPress bug bounty
+#   - /assets/ can contain config.json, .env, and other sensitive files
 _CDN_BLACKLIST: tuple[str, ...] = (
-    "shopifycloud", "wp-content/plugins", "wp-includes", 
-    "cdn.", "/assets/", "fonts.googleapis", "cdnjs.cloudflare"
+    "shopifycloud", "wp-includes",
+    "cdn.", "fonts.googleapis", "cdnjs.cloudflare",
+    "ajax.googleapis", "unpkg.com", "jsdelivr.net",
 )
 
 def is_high_value_url(url: str) -> bool:
