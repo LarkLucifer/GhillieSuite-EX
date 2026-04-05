@@ -65,14 +65,14 @@ _NODEJS_WORDLIST = [
 # Applied when cfg.stealth_mode is True or build_command(..., stealth=True)
 _STEALTH_ARGS: dict[str, list[str]] = {
     "nuclei": ["-rl", "15", "-c", "5", "-bs", "1", "-timeout", "5"],
-    "sqlmap": ["--delay=1", "--random-agent"],
-    "ffuf":   ["-t", "5", "-p", "0.5"],
-    "dirb":   ["-t", "5", "-p", "0.5"],
+    "sqlmap": ["--delay=1", "--threads=1", "--random-agent"],
+    "ffuf":   ["-t", "1", "-p", "0.5"],
+    "dirb":   ["-t", "1", "-p", "0.5"],
 }
 
 # Extended stealth args applied when WAF evasion mode is enabled
 _WAF_EVASION_STEALTH_ARGS: dict[str, list[str]] = {
-    "sqlmap": ["--delay=2", "--random-agent", "--tamper=between,randomcase,space2comment"],
+    "sqlmap": ["--delay=3", "--threads=1", "--fail-on-tarpit", "--random-agent", "--tamper=between,randomcase,space2comment"],
 }
 
 # SQLMap lethal extraction and WAF fallback arg sets
@@ -95,23 +95,21 @@ def apply_stealth_args(tool_name: str, cmd: list[str], enabled: bool) -> list[st
             skip_next = False
             continue
 
-        if tool_name in ("nuclei",):
+        if tool_name == "sqlmap":
+            if tok in ("--delay", "--threads", "--timeout"):
+                skip_next = True
+                continue
+            if tok.startswith(("--delay=", "--threads=", "--timeout=")):
+                continue
+        elif tool_name in ("nuclei",):
             if tok in ("-rl", "-c", "-bs", "-timeout"):
                 skip_next = True
                 continue
-        elif tool_name in ("ffuf", "dirb"):
-            if tok in ("-t", "-p"):
+        elif tool_name in ("ffuf", "dirb", "katana"):
+            if tok in ("-t", "-p", "-c", "--concurrency"):
                 skip_next = True
                 continue
-        elif tool_name == "sqlmap":
-            if tok == "--delay":
-                skip_next = True
-                continue
-            if tok.startswith("--delay="):
-                continue
-        if tool_name in ("nuclei",) and tok.startswith(("-rl=", "-c=", "-bs=", "-timeout=")):
-            continue
-
+        
         cleaned.append(tok)
 
     stealth_args = _STEALTH_ARGS[tool_name]
