@@ -445,29 +445,45 @@ async def verify_bypass(
         global _verify_session
         if '_verify_session' not in globals() or _verify_session is None:
             try:
+                # Impersonate Chrome 120 (Latest modern fingerprint)
                 _verify_session = _requests.Session(impersonate="chrome120")
             except TypeError:
                 _verify_session = _requests.Session()
             _verify_session.verify = False
 
-        _verify_session.headers.update(headers)
-
         def _do_request():
-            rand_ua = random.choice([
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-            ])
+            # Advanced Header Rotation for modern WAF evasion
+            from ghilliesuite_ex.agents.recon import _USER_AGENTS
+            ua = random.choice(_USER_AGENTS)
+            headers = {
+                "User-Agent": ua,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Sec-Ch-Ua": '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"',
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1"
+            }
+            if auth_headers:
+                headers.update(auth_headers)
+            
             return _verify_session.get(
                 injected_url,
                 timeout=timeout,
                 allow_redirects=True,
-                headers={"User-Agent": rand_ua}
+                headers=headers
             )
 
         resp = await _run_in_thread(_do_request)
-        await asyncio.sleep(random.uniform(0.7, 2.0))  # Add Jitter delay between verify_bypass calls
+        
+        # Dynamic Jitter: Faster for turbo, slower for stealth/normal
+        from ghilliesuite_ex.config import cfg as _cfg
+        delay = random.uniform(0.1, 0.4) if _cfg.turbo_mode else random.uniform(0.7, 2.0)
+        await asyncio.sleep(delay)
     except Exception as exc:
         return BypassResult(evidence=f"Request error: {exc}", payload_used=payload)
 

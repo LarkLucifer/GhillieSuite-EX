@@ -73,6 +73,8 @@ _STEALTH_ARGS: dict[str, list[str]] = {
 # Extended stealth args applied when WAF evasion mode is enabled
 _WAF_EVASION_STEALTH_ARGS: dict[str, list[str]] = {
     "sqlmap": ["--delay=3", "--threads=1", "--fail-on-tarpit", "--random-agent", "--tamper=between,randomcase,space2comment"],
+    "httpx":  ["-random-agent", "-http2", "-tls-probe", "-v", "-retries", "3"],
+    "nuclei": ["-rl", "10", "-c", "5", "-bs", "1", "-timeout", "10", "-max-host-error", "3"],
 }
 
 # SQLMap lethal extraction and WAF fallback arg sets
@@ -138,10 +140,11 @@ def apply_turbo_args(tool_name: str, cmd: list[str], enabled: bool) -> list[str]
 
     # Simple scaling: if turbo is on, we swap the safe defaults for aggressive ones
     turbo_map = {
-        "httpx": [("-rl", "15", "100")],
-        "ffuf":  [("-t", "10", "60")],
-        "arjun": [("-t", "5", "20")],
+        "httpx":  [("-rl", "15", "150")],
+        "ffuf":   [("-t", "10", "100")],
+        "arjun":  [("-t", "5", "30")],
         "sqlmap": [("--threads=3", "--threads=10")],
+        "nuclei": [("-rl", "5", "150"), ("-c", "5", "50")],
     }
 
     if tool_name not in turbo_map:
@@ -292,6 +295,8 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "-l", "{input_file}",
             "-silent", "-status-code", "-title", "-tech-detect",
             "-random-agent",       # WAF bypass: rotate User-Agent per request
+            "-http2",              # Evasion: use modern protocol
+            "-tls-probe",          # Evasion: probe TLS fingerprints
             "-retries", "2",       # retry failed probes instead of silently dropping
             "-rl", "15",           # rate-limit to 15 req/s — SAFE for home routers
             "-json", "-o", "{output_file}",

@@ -133,33 +133,58 @@ def _headers_from_flags(flags: list[str]) -> dict[str, str]:
 
 
 async def _probe_url(
-    client: httpx.AsyncClient,
+    session: Any,
     url: str,
     sem: asyncio.Semaphore,
 ) -> dict[str, str | int] | None:
-    """Probe a URL for liveness and return basic metadata."""
+    """Probe a URL for liveness using curl_cffi for browser impersonation."""
     async with sem:
-        if getattr(global_cfg, "recon_jitter", True) and not getattr(global_cfg, "turbo_mode", False):
+        from ghilliesuite_ex.config import cfg as _cfg
+        if _cfg.recon_jitter and not _cfg.turbo_mode:
             await asyncio.sleep(random.uniform(0.5, 1.5))
+        
         try:
-            req_headers = dict(client.headers)
-            req_headers["User-Agent"] = random.choice(_USER_AGENTS)
-            resp = await client.get(url, headers=req_headers)
+            from ghilliesuite_ex.agents.base import _run_in_thread
+            
+            def _do_get():
+                ua = random.choice(_USER_AGENTS)
+                headers = {
+                    "User-Agent": ua,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Sec-Ch-Ua": '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+                    "Sec-Ch-Ua-Platform": '"Windows"',
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "none",
+                    "Sec-Fetch-User": "?1",
+                    "Upgrade-Insecure-Requests": "1"
+                }
+                return session.get(
+                    url,
+                    timeout=10,
+                    allow_redirects=_cfg.allow_redirects,
+                    headers=headers,
+                    verify=False
+                )
+
+            resp = await _run_in_thread(_do_get)
+            
+            # Extract basic metadata
+            server = resp.headers.get("server", "") or ""
+            powered = resp.headers.get("x-powered-by", "") or ""
+            tech_parts = []
+            if server: tech_parts.append(server)
+            if powered and powered not in tech_parts: tech_parts.append(powered)
+            
+            return {
+                "url": str(resp.url),
+                "status_code": int(resp.status_code),
+                "server": server,
+                "tech_stack": ",".join(tech_parts),
+            }
         except Exception as exc:
             return {"url": url, "error": str(exc)}
-        server = resp.headers.get("server", "") or ""
-        powered = resp.headers.get("x-powered-by", "") or ""
-        tech_parts = []
-        if server:
-            tech_parts.append(server)
-        if powered and powered not in tech_parts:
-            tech_parts.append(powered)
-        return {
-            "url": str(resp.url),
-            "status_code": int(resp.status_code),
-            "server": server,
-            "tech_stack": ",".join(tech_parts),
-        }
 
 
 class ReconAgent(BaseAgent):
@@ -343,20 +368,21 @@ class ReconAgent(BaseAgent):
         httpx_targets = filter_in_scope(httpx_targets, self.scope)
         httpx_delta = [t for t in httpx_targets if t not in httpx_history]
         if httpx_delta:
-            self.console.print("[cyan]  Phase 4 - httpx probing live services[/cyan]")
-            headers = _headers_from_flags(auth_headers)
+            self.console.print("[cyan]  Phase 4 - Advanced HTTP probing (Chrome Fingerprint)[/cyan]")
+            
+            from curl_cffi import requests as _requests
             # Lower concurrency to 10 for home router stability (bypassed if turbo)
             max_concurrency = 50 if self.cfg.turbo_mode else 10
             sem = asyncio.Semaphore(max_concurrency)
-            async with httpx.AsyncClient(
-                verify=False,
-                timeout=10.0,
-                follow_redirects=self.cfg.allow_redirects,
-                headers=headers or None,
-            ) as client:
-                tasks = [_probe_url(client, url, sem) for url in httpx_delta]
-                with Status("[cyan]httpx probing (python)...[/cyan]", console=self.console):
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            try:
+                session = _requests.Session(impersonate="chrome120")
+            except TypeError:
+                session = _requests.Session()
+
+            tasks = [_probe_url(session, url, sem) for url in httpx_delta]
+            with Status("[cyan]Probing with curl_cffi...[/cyan]", console=self.console):
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
             probe_errors = 0
             max_probe_errors = 20
