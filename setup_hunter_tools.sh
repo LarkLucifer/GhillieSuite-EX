@@ -35,8 +35,8 @@ go install -v github.com/rootpk/subzy@latest
 go install -v github.com/ffuf/ffuf/v2@latest
 
 # Python Tools
-echo "[+] Installing Python-based tools..."
-pip install arjun sqlmap curl_cffi --upgrade
+echo "[+] Installing Python-based tools and dependencies..."
+pip install arjun sqlmap curl_cffi requests rich python-dotenv --upgrade
 
 echo "[+] Installation complete! Please run 'source ~/.bashrc' and then you're ready to hunt."
 echo "[!] Recommended Execution Command:"

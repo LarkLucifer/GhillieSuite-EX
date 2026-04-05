@@ -420,9 +420,11 @@ async def verify_bypass(
         BypassResult with success flag and evidence.
     """
     try:
-        from ghilliesuite_ex.utils import http as _requests
+        from curl_cffi import requests as _requests
+        use_curl = True
     except ImportError:
-        return BypassResult(evidence="curl_cffi library not available")
+        use_curl = False
+        import httpx as _requests
 
     # Build the URL with the payload injected
     injected_url = _inject_payload(url, parameter, payload)
@@ -441,15 +443,17 @@ async def verify_bypass(
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
-        # Connection pooling by keeping the session alive if this is called in a loop
+        # Connection pooling
         global _verify_session
         if '_verify_session' not in globals() or _verify_session is None:
-            try:
-                # Impersonate Chrome 120 (Latest modern fingerprint)
-                _verify_session = _requests.Session(impersonate="chrome120")
-            except TypeError:
-                _verify_session = _requests.Session()
-            _verify_session.verify = False
+            if use_curl:
+                try:
+                    _verify_session = _requests.Session(impersonate="chrome120")
+                except TypeError:
+                    _verify_session = _requests.Session()
+                _verify_session.verify = False
+            else:
+                _verify_session = _requests.AsyncClient(verify=False)
 
         def _do_request():
             # Advanced Header Rotation for modern WAF evasion

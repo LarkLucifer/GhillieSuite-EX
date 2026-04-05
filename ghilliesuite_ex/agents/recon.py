@@ -137,38 +137,29 @@ async def _probe_url(
     url: str,
     sem: asyncio.Semaphore,
 ) -> dict[str, str | int] | None:
-    """Probe a URL for liveness using curl_cffi for browser impersonation."""
+    """Probe a URL for liveness using either curl_cffi or httpx."""
     async with sem:
         from ghilliesuite_ex.config import cfg as _cfg
         if _cfg.recon_jitter and not _cfg.turbo_mode:
             await asyncio.sleep(random.uniform(0.5, 1.5))
         
-        try:
-            from ghilliesuite_ex.agents.base import _run_in_thread
-            
-            def _do_get():
+        async def _do_get():
+            # curl_cffi session has 'impersonate' attribute
+            if hasattr(session, "impersonate"):
                 ua = random.choice(_USER_AGENTS)
                 headers = {
                     "User-Agent": ua,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.9",
-                    "Sec-Ch-Ua": '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-                    "Sec-Ch-Ua-Platform": '"Windows"',
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-User": "?1",
-                    "Upgrade-Insecure-Requests": "1"
                 }
-                return session.get(
-                    url,
-                    timeout=10,
-                    allow_redirects=_cfg.allow_redirects,
-                    headers=headers,
-                    verify=False
-                )
+                return session.get(url, timeout=10, allow_redirects=_cfg.allow_redirects, headers=headers, verify=False)
+            else:
+                # httpx client
+                ua = random.choice(_USER_AGENTS)
+                return await session.get(url, timeout=10, follow_redirects=_cfg.allow_redirects, headers={"User-Agent": ua})
 
-            resp = await _run_in_thread(_do_get)
+        try:
+            resp = await _do_get()
             
             # Extract basic metadata
             server = resp.headers.get("server", "") or ""
@@ -376,13 +367,27 @@ class ReconAgent(BaseAgent):
             sem = asyncio.Semaphore(max_concurrency)
             
             try:
-                session = _requests.Session(impersonate="chrome120")
-            except TypeError:
-                session = _requests.Session()
+                from curl_cffi.requests import AsyncSession as CurlSession
+                use_curl = True
+            except ImportError:
+                use_curl = False
+                self.console.print("[yellow]  WARNING: curl_cffi not found. Stealth reduced (falling back to httpx).[/yellow]")
 
-            tasks = [_probe_url(session, url, sem) for url in httpx_delta]
-            with Status("[cyan]Probing with curl_cffi...[/cyan]", console=self.console):
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Lower concurrency to 10 for home router stability (boosted only in turbo)
+            max_concurrency = 50 if self.cfg.turbo_mode else 10
+            sem = asyncio.Semaphore(max_concurrency)
+            
+            if use_curl:
+                session = CurlSession(impersonate="chrome120", verify=False)
+                tasks = [_probe_url(session, url, sem) for url in httpx_delta]
+                with Status("[cyan]Probing with curl_cffi...[/cyan]", console=self.console):
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                import httpx
+                async with httpx.AsyncClient(verify=False, follow_redirects=self.cfg.allow_redirects) as session:
+                    tasks = [_probe_url(session, url, sem) for url in httpx_delta]
+                    with Status("[cyan]Probing with httpx...[/cyan]", console=self.console):
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
 
             probe_errors = 0
             max_probe_errors = 20

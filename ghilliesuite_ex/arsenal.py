@@ -68,6 +68,7 @@ _STEALTH_ARGS: dict[str, list[str]] = {
     "sqlmap": ["--delay=1", "--threads=1", "--random-agent"],
     "ffuf":   ["-t", "1", "-p", "0.5"],
     "dirb":   ["-t", "1", "-p", "0.5"],
+    "naabu":  ["-rate", "100", "-top-ports", "100"],
 }
 
 # Extended stealth args applied when WAF evasion mode is enabled
@@ -145,6 +146,7 @@ def apply_turbo_args(tool_name: str, cmd: list[str], enabled: bool) -> list[str]
         "arjun":  [("-t", "5", "30")],
         "sqlmap": [("--threads=3", "--threads=10")],
         "nuclei": [("-rl", "5", "150"), ("-c", "5", "50")],
+        "naabu":  [("-rate", "250", "1000"), ("-top-ports", "1000", "1000")],
     }
 
     if tool_name not in turbo_map:
@@ -277,7 +279,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         binary="naabu",
         base_cmd=[
             "naabu", "-list", "{input_file}", "-json", "-o", "{output_file}",
-            "-top-ports", "1000", "-silent",
+            "-top-ports", "1000", "-silent", "-rate", "250",
         ],
         scope_flag=None,
         category="Recon",
