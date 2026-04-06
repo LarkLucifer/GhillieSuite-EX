@@ -299,6 +299,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "-random-agent",       # WAF bypass: rotate User-Agent per request
             "-http2",              # Evasion: use modern protocol
             "-tls-probe",          # Evasion: probe TLS fingerprints
+            "-insecure",           # Evasion: ignore invalid SSL certificates
             "-retries", "2",       # retry failed probes instead of silently dropping
             "-rl", "15",           # rate-limit to 15 req/s — SAFE for home routers
             "-json", "-o", "{output_file}",
@@ -400,6 +401,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             # WARNING: Do not increase rate limit above 5 req/s to prevent home router crash and ISP ban
             "-rl", "5",       # rate-limit to 5 req/s — safe for home networks
             "-c", "5",        # concurrency: 5 parallel template checks
+            "-insecure",      # ignore invalid SSL certificates
             "-silent", "-j",
         ],
         scope_flag="-u {target}",

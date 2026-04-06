@@ -479,7 +479,8 @@ async def verify_bypass(
                 injected_url,
                 timeout=timeout,
                 allow_redirects=True,
-                headers=headers
+                headers=headers,
+                verify=False
             )
 
         resp = await _run_in_thread(_do_request)
