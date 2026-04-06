@@ -20,8 +20,14 @@ Design decisions:
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+_EVASION_COOLDOWN_SECONDS = 60
+_last_waf_block_time = 0.0
+_cooldown_lock = asyncio.Lock()
 
 
 MAX_OUTPUT_BYTES = 512 * 1024  # 512 KB cap on raw stdout
@@ -66,6 +72,16 @@ async def run_tool(
     Returns:
         ToolResult with stdout, stderr, returncode, and an error string if applicable.
     """
+    # Global Evasion Cooldown Check
+    async with _cooldown_lock:
+        now = time.time()
+        elapsed = now - _last_waf_block_time
+        if elapsed < _EVASION_COOLDOWN_SECONDS:
+            wait_time = _EVASION_COOLDOWN_SECONDS - elapsed
+            # We don't print here to keep the executor clean, 
+            # but we ensure the delay happens.
+            await asyncio.sleep(wait_time)
+
     stdin_pipe = asyncio.subprocess.PIPE if stdin_data else None
 
     try:
@@ -97,11 +113,20 @@ async def run_tool(
         stdout_text = stdout_raw[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
         stderr_text = stderr_raw[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
 
-        return ToolResult(
+        res = ToolResult(
             stdout=stdout_text,
             stderr=stderr_text,
             returncode=proc.returncode or 0,
         )
+
+        # Detect WAF Blocks (403/429)
+        combined = (stdout_text + stderr_text).lower()
+        if "403 forbidden" in combined or "429 too many requests" in combined:
+            global _last_waf_block_time
+            async with _cooldown_lock:
+                _last_waf_block_time = time.time()
+        
+        return res
 
     except FileNotFoundError:
         binary = cmd[0]
@@ -157,6 +182,14 @@ async def run_tool_to_file(
     # Ensure parent directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Global Evasion Cooldown Check
+    async with _cooldown_lock:
+        now = time.time()
+        elapsed = now - _last_waf_block_time
+        if elapsed < _EVASION_COOLDOWN_SECONDS:
+            wait_time = _EVASION_COOLDOWN_SECONDS - elapsed
+            await asyncio.sleep(wait_time)
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -185,12 +218,21 @@ async def run_tool_to_file(
         # Verify that the tool actually wrote the output file
         resolved_output = output_path if output_path.exists() and output_path.stat().st_size > 0 else None
 
-        return ToolResult(
+        res = ToolResult(
             stdout=stdout_text,
             stderr=stderr_text,
             returncode=proc.returncode or 0,
             output_file=resolved_output,
         )
+
+        # Detect WAF Blocks (403/429)
+        combined = (stdout_text + stderr_text).lower()
+        if "403 forbidden" in combined or "429 too many requests" in combined:
+            global _last_waf_block_time
+            async with _cooldown_lock:
+                _last_waf_block_time = time.time()
+                
+        return res
 
     except FileNotFoundError:
         binary = cmd[0]

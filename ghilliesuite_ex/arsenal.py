@@ -319,7 +319,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         base_cmd=[
             "katana", "-u", "{target}",
             "-silent",
-            "-d", "3",
+            "-d", "2",              # Reduced depth to 2 to prevent "menyusur" into endless product loops
             "-jc",
             "-ct", "5m",
             "-f", "qurl",
@@ -327,6 +327,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             "js,css,png,jpg,jpeg,svg,woff,woff2,ico,webp,gif,map,mp4,pdf,"
             "bmp,tif,tiff,ttf,otf,eot,mp3,wav,ogg,webm,m4a,m4v,avi,mov,mkv,"
             "zip,rar,7z,tar,gz,tgz,bz2,iso,exe,dmg,apk",
+            "-exclude-path", "product/,image/,images/,assets/,static/,media/,node_modules/,vendor/",
         ],
         scope_flag="-u {target}",
         category="Recon",
@@ -401,7 +402,6 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
             # WARNING: Do not increase rate limit above 5 req/s to prevent home router crash and ISP ban
             "-rl", "5",       # rate-limit to 5 req/s — safe for home networks
             "-c", "5",        # concurrency: 5 parallel template checks
-            "-insecure",      # ignore invalid SSL certificates
             "-silent", "-j",
         ],
         scope_flag="-u {target}",
@@ -546,6 +546,25 @@ def build_command(
         tok = tok.replace("{input_file}",  in_str)
         tok = tok.replace("{wordlist}",    wl_str)
         cmd.append(tok)
+
+    # Centralized Auth Injection for ALL tools
+    try:
+        from ghilliesuite_ex.config import cfg as _cfg
+        cookie_val = _cfg.auth_cookie
+        if cookie_val:
+            if tool_name == "sqlmap" and "--cookie=" not in "".join(cmd):
+                cmd.append(f"--cookie={cookie_val}")
+            elif tool_name == "dalfox" and "-C" not in cmd:
+                cmd.extend(["-C", cookie_val])
+            elif tool_name in ("nuclei", "httpx", "ffuf", "katana"):
+                # Use standard header injection if not already present
+                if not any("cookie:" in str(tok).lower() for tok in cmd):
+                    if tool_name == "ffuf":
+                        cmd.extend(["-H", f"Cookie: {cookie_val}"])
+                    else:
+                        cmd.extend(["-H", f"Cookie: {cookie_val}"])
+    except Exception:
+        pass
 
     # Inject auth headers for supported tools
     if auth_headers and spec.supports_auth_headers:

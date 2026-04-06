@@ -13,6 +13,8 @@ GhillieSuite-EX has evolved from a multi-tool wrapper into a **strict, evasion-f
 - **Global Proxy Routing & IP Evasion:** Every underlying tool (`httpx`, `sqlmap`, `nuclei`, `dalfox`, `katana`) and Python engine dynamically routes traffic through a centralized `--proxy` argument. Integrates seamlessly with Tor or ScraperAPI to prevent ISP blacklisting.
 - **TLS/JA3 Fingerprint Spoofing:** Standard `requests` replaced with `curl_cffi`. All internal API and engine requests flawlessly impersonate Google Chrome (`chrome120`) to bypass Cloudflare and Akamai bot-defense checks.
 - **Behavioral WAF Evasion Engine:** Implements batched processing (max 200 URLs), async LLM exponential backoffs, randomized Jitter delays (0.7s - 2.0s), and rotating User-Agents for robust, interrupt-free WAF mutation scanning.
+- **Global Evasion Cooldown (WAF Safe):** NEW: The pipeline now automatically detects HTTP 403 Forbidden and 429 Too Many Requests responses from ALL underlying tools. If a WAF block is detected, the hunt globally pauses for 60 seconds to cool down the IP and prevent permanent blacklisting—perfect for home connections (Parrot OS).
+- **Stealthy Tool Throttling:** Tools like Dalfox and Nuclei are dynamically throttled in `--stealth` mode (e.g. 5 threads for Dalfox) to maintain a human-like request profile.
 - **Targeted Tool Execution:** SQLMap and Arjun execute with surgical precision—SQLMap triggers *only* on parameterized URLs (`?id=`), and Arjun scans *only* unique base paths to preserve bandwidth and stealth.
 - **Isolated Custom Agents (VaultScout & ProtoGhost):** Extensible architecture featuring dedicated VaultScout (deep git/env secret scanning) and ProtoGhost (Playwright-driven Prototype Pollution sandbox verification).
 
@@ -92,12 +94,12 @@ GhillieSuite-EX.sec hunt \
   --target example.com \
   --scope scope_example.txt
 
-# Authenticated deep scan — injects session into ALL active tools
+# Authenticated deep scan — injects session into ALL active tools (sqlmap, dalfox, nuclei, etc.)
 GhillieSuite-EX.sec hunt \
   --target app.example.com \
   --scope scope_example.txt \
-  --cookie "session=abc123; csrf=xyz" \
-  --header "Authorization: Bearer eyJhbGci..."
+  --cookies 'session=abc123; csrf=xyz' \
+  --header 'Authorization: Bearer eyJhbGci...'
 ```
 
 ---
