@@ -1,5 +1,12 @@
-# GhillieSuite-EX scope file — one entry per line.
-# Wildcards: *.example.com includes all subdomains.
+# GhillieSuite-EX scope file - one entry per line.
+# Exact host: example.com matches ONLY example.com
+# Wildcards: *.example.com matches subdomains only (not the apex)
+# Extra directives:
+#   exclude:admin.example.com
+#   url:https://app.example.com/api/
+#   exclude-url:https://app.example.com/private/
+#   cidr:192.0.2.0/24
+#   exclude-cidr:192.0.2.128/25
 # Lines starting with '#' are comments and are ignored.
 # Pass this file via:  GhillieSuite-EX.sec hunt --target example.com --scope scope_example.txt
 

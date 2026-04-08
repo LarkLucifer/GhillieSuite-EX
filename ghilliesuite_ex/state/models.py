@@ -1,6 +1,6 @@
 """
 ghilliesuite_ex/state/models.py
-────────────────────
+───────────────────────────────
 Pure-Python dataclasses that represent structured data stored in the SQLite DB.
 Using dataclasses (not an ORM) keeps dependencies minimal and the schema clear.
 """
@@ -8,7 +8,12 @@ Using dataclasses (not an ORM) keeps dependencies minimal and the schema clear.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utc_now_iso() -> str:
+    """Return a timezone-aware UTC timestamp in ISO 8601 format."""
+    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass
@@ -20,9 +25,7 @@ class Host:
     status_code: int = 0
     server: str = ""
     tech_stack: str = ""          # comma-separated technologies detected by httpx
-    discovered_at: str = field(
-        default_factory=lambda: datetime.utcnow().isoformat()
-    )
+    discovered_at: str = field(default_factory=_utc_now_iso)
     id: int | None = None         # assigned by DB on insert
 
 
@@ -34,10 +37,8 @@ class Endpoint:
     method: str = "GET"
     params: str = ""              # comma-separated query parameters
     source_tool: str = ""         # which tool found this (katana, gau, etc.)
-    host_id: int | None = None    # FK → hosts.id
-    found_at: str = field(
-        default_factory=lambda: datetime.utcnow().isoformat()
-    )
+    host_id: int | None = None    # FK -> hosts.id
+    found_at: str = field(default_factory=_utc_now_iso)
     id: int | None = None
 
 
@@ -52,9 +53,7 @@ class Finding:
     evidence: str                 # brief human-readable evidence string
     reproducible_steps: str       # numbered steps for the report
     raw_output: str               # trimmed raw stdout excerpt (max 2000 chars)
-    timestamp: str = field(
-        default_factory=lambda: datetime.utcnow().isoformat()
-    )
+    timestamp: str = field(default_factory=_utc_now_iso)
     id: int | None = None
 
 
@@ -68,9 +67,7 @@ class CVEResult:
     cvss_score: float = 0.0
     poc_url: str = ""
     published_date: str = ""
-    fetched_at: str = field(
-        default_factory=lambda: datetime.utcnow().isoformat()
-    )
+    fetched_at: str = field(default_factory=_utc_now_iso)
 
 
 @dataclass
@@ -82,9 +79,7 @@ class Service:
     proto: str = "tcp"
     service: str = ""
     source_tool: str = ""
-    discovered_at: str = field(
-        default_factory=lambda: datetime.utcnow().isoformat()
-    )
+    discovered_at: str = field(default_factory=_utc_now_iso)
     id: int | None = None
 
 
@@ -97,7 +92,5 @@ class Screenshot:
     title: str = ""
     status: int = 0
     source_tool: str = "gowitness"
-    captured_at: str = field(
-        default_factory=lambda: datetime.utcnow().isoformat()
-    )
+    captured_at: str = field(default_factory=_utc_now_iso)
     id: int | None = None

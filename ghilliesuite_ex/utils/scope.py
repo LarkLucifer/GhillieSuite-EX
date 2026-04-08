@@ -1,123 +1,266 @@
 """
 ghilliesuite_ex/utils/scope.py
-───────────────────
-Scope loading and enforcement.
+──────────────────────────────
+Strict scope loading and enforcement.
 
-This module is the guardian between the agent and out-of-scope assets.
-Every tool execution path must go through these helpers to ensure that
-no requests are sent to hosts outside the HackerOne program scope.
-
-Usage:
-    scope = load_scope("scope.txt")           # from file
-    scope = load_scope("example.com,api.example.com")  # from CLI string
-    filtered = enforce_scope(tool_output, scope)
+Supported rule styles:
+  • `example.com`                → include exact host only
+  • `*.example.com`              → include subdomains only (not the apex)
+  • `include:example.com`        → explicit include host
+  • `exclude:admin.example.com`  → explicit exclude host
+  • `url:https://app.example.com/api/`
+  • `exclude-url:https://app.example.com/private/`
+  • `cidr:10.10.10.0/24`
+  • `exclude-cidr:10.10.10.128/25`
 """
 
 from __future__ import annotations
 
-import re
+from dataclasses import dataclass
+from ipaddress import ip_address, ip_network
 from pathlib import Path
+from typing import Any
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 
-def load_scope(scope_input: str) -> list[str]:
+@dataclass(frozen=True)
+class ScopeRule:
+    include: bool
+    kind: str
+    value: Any
+    raw: str
+
+
+@dataclass(frozen=True)
+class ScopeSpec:
+    rules: tuple[ScopeRule, ...]
+    entries: tuple[str, ...]
+
+    def __iter__(self):
+        return iter(self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+    def __getitem__(self, index):
+        return self.entries[index]
+
+
+@dataclass(frozen=True)
+class ScopeTarget:
+    raw: str
+    host: str
+    normalized_url: str | None
+    ip: Any | None
+
+
+def load_scope(scope_input: str) -> ScopeSpec:
     """
     Parse scope from either a comma-separated string or a file path.
 
-    File format (scope.txt):
-        # Comments are ignored
-        example.com
-        *.example.com
-        api.example.com
-
-    Args:
-        scope_input: A comma-separated list of domains OR a path to a scope file.
-
-    Returns:
-        A deduplicated list of scope strings (wildcards preserved, e.g. '*.example.com').
-
-    Raises:
-        ValueError: If a file path is provided but does not exist.
+    Rules are strict:
+      - example.com only matches example.com
+      - *.example.com only matches subdomains
+      - exclude rules override include rules
     """
     path = Path(scope_input)
     if path.exists() and path.is_file():
         raw_lines = path.read_text(encoding="utf-8").splitlines()
     else:
-        # Treat as comma-separated inline list
         raw_lines = [s.strip() for s in scope_input.split(",")]
 
-    scope: list[str] = []
+    entries: list[str] = []
+    rules: list[ScopeRule] = []
     for line in raw_lines:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # Strip leading '*.' for normalised matching but keep original for display
-        scope.append(line.lower())
+        rule = _parse_scope_rule(line)
+        entries.append(rule.raw)
+        rules.append(rule)
 
-    if not scope:
+    if not rules:
         raise ValueError(
-            "Scope is empty! Provide at least one domain via --scope. "
+            "Scope is empty! Provide at least one include rule via --scope. "
             "Example: --scope example.com or --scope scope.txt"
         )
 
-    return list(dict.fromkeys(scope))  # deduplicate, preserve order
+    if not any(rule.include for rule in rules):
+        raise ValueError("Scope must contain at least one include rule.")
+
+    deduped_entries = tuple(dict.fromkeys(entries))
+    deduped_rules = tuple({rule.raw: rule for rule in rules}.values())
+    return ScopeSpec(rules=deduped_rules, entries=deduped_entries)
 
 
-def is_in_scope(host: str, scope_domains: list[str]) -> bool:
+def is_in_scope(target: str, scope: ScopeSpec | list[str]) -> bool:
+    """Return True when target is allowed and not excluded by the scope rules."""
+    allowed, _reason = explain_scope_decision(target, scope)
+    return allowed
+
+
+def validate_target_scope(target: str, scope: ScopeSpec | list[str]) -> None:
+    """Raise ValueError when the target is outside scope or explicitly excluded."""
+    allowed, reason = explain_scope_decision(target, scope)
+    if not allowed:
+        raise ValueError(reason)
+
+
+def explain_scope_decision(target: str, scope: ScopeSpec | list[str]) -> tuple[bool, str]:
     """
-    Return True if `host` matches any entry in `scope_domains`.
-    Handles direct matches and wildcard entries (*.example.com).
-
-    Args:
-        host:         A domain, subdomain, or full URL.
-        scope_domains: List from load_scope().
+    Return (allowed, explanation) for a target against the given scope rules.
+    Exclude rules always override include rules.
     """
-    # Extract hostname from URLs
-    url_match = re.search(r"https?://([^/:?#]+)", host)
-    if url_match:
-        host = url_match.group(1)
+    spec = _coerce_scope_spec(scope)
+    parsed_target = _parse_target(target)
 
-    host = host.lower().strip().rstrip(".")
+    matched_includes: list[str] = []
+    matched_excludes: list[str] = []
 
-    for sd in scope_domains:
-        sd = sd.lower().strip()
-        if sd.startswith("*."):
-            base = sd[2:]  # strip '*.'
-            if host == base or host.endswith("." + base):
-                return True
-        else:
-            if host == sd or host.endswith("." + sd):
-                return True
+    for rule in spec.rules:
+        if _rule_matches(rule, parsed_target):
+            if rule.include:
+                matched_includes.append(rule.raw)
+            else:
+                matched_excludes.append(rule.raw)
 
-    return False
+    if matched_excludes:
+        return (False, f"Target '{target}' is explicitly excluded by scope rule(s): {', '.join(matched_excludes)}")
+    if matched_includes:
+        return (True, f"Target '{target}' is allowed by scope rule(s): {', '.join(matched_includes)}")
+    return (False, f"Target '{target}' does not match any include rule in the provided scope.")
 
 
-def enforce_scope(raw_output: str, scope_domains: list[str]) -> str:
-    """
-    Filter multi-line tool output to only lines that mention an in-scope host.
-    Used for tools that don't natively support scope flags (e.g. gau, trufflehog).
-
-    Args:
-        raw_output:    Raw stdout from a tool.
-        scope_domains: In-scope list from load_scope().
-
-    Returns:
-        Filtered string containing only in-scope lines.
-    """
+def enforce_scope(raw_output: str, scope: ScopeSpec | list[str]) -> str:
+    """Filter multi-line tool output to only lines that mention an in-scope target."""
     lines = raw_output.splitlines()
-    filtered = [line for line in lines if is_in_scope(line, scope_domains)]
+    filtered = [line for line in lines if is_in_scope(line, scope)]
     return "\n".join(filtered)
 
 
-def scope_filter_domains(domains: list[str], scope_domains: list[str]) -> list[str]:
+def scope_filter_domains(domains: list[str], scope: ScopeSpec | list[str]) -> list[str]:
     """Filter a list of domain strings to in-scope entries only."""
-    return [d for d in domains if is_in_scope(d, scope_domains)]
+    return [d for d in domains if is_in_scope(d, scope)]
 
 
-def scope_filter_urls(urls: list[str], scope_domains: list[str]) -> list[str]:
+def scope_filter_urls(urls: list[str], scope: ScopeSpec | list[str]) -> list[str]:
     """Filter a list of URLs to in-scope entries only."""
-    return [u for u in urls if is_in_scope(u, scope_domains)]
+    return [u for u in urls if is_in_scope(u, scope)]
 
 
-def filter_in_scope(targets: list[str], scope_domains: list[str]) -> list[str]:
-    """Return only targets that are in scope (domains or URLs)."""
-    return [t for t in targets if is_in_scope(t, scope_domains)]
+def filter_in_scope(targets: list[str], scope: ScopeSpec | list[str]) -> list[str]:
+    """Return only targets that are in scope (domains, URLs, or literal IPs)."""
+    return [t for t in targets if is_in_scope(t, scope)]
+
+
+def _coerce_scope_spec(scope: ScopeSpec | list[str]) -> ScopeSpec:
+    if isinstance(scope, ScopeSpec):
+        return scope
+
+    entries = [str(item).strip() for item in scope if str(item).strip()]
+    rules = tuple(_parse_scope_rule(entry) for entry in entries)
+    return ScopeSpec(rules=rules, entries=tuple(entries))
+
+
+def _parse_scope_rule(line: str) -> ScopeRule:
+    raw = line.strip()
+    lowered = raw.lower()
+
+    if ":" in raw:
+        prefix, remainder = raw.split(":", 1)
+        directive = prefix.strip().lower()
+        value = remainder.strip()
+
+        if directive in {"include", "host"}:
+            return _build_host_rule(value, include=True, raw=raw)
+        if directive in {"exclude", "exclude-host"}:
+            return _build_host_rule(value, include=False, raw=raw)
+        if directive in {"url", "include-url"}:
+            return ScopeRule(include=True, kind="url_prefix", value=_normalize_url_prefix(value), raw=raw)
+        if directive == "exclude-url":
+            return ScopeRule(include=False, kind="url_prefix", value=_normalize_url_prefix(value), raw=raw)
+        if directive in {"cidr", "include-cidr"}:
+            return ScopeRule(include=True, kind="cidr", value=ip_network(value, strict=False), raw=raw)
+        if directive == "exclude-cidr":
+            return ScopeRule(include=False, kind="cidr", value=ip_network(value, strict=False), raw=raw)
+
+    return _build_host_rule(lowered, include=True, raw=raw)
+
+
+def _build_host_rule(value: str, include: bool, raw: str) -> ScopeRule:
+    host = _normalize_host_literal(value)
+    if "*" in host and not host.startswith("*."):
+        raise ValueError(f"Invalid wildcard scope rule: '{raw}'. Use '*.example.com'.")
+
+    if host.startswith("*."):
+        base = host[2:]
+        if not base or "*" in base:
+            raise ValueError(f"Invalid wildcard scope rule: '{raw}'.")
+        return ScopeRule(include=include, kind="host_wildcard", value=base, raw=raw)
+
+    return ScopeRule(include=include, kind="host_exact", value=host, raw=raw)
+
+
+def _normalize_host_literal(value: str) -> str:
+    host = value.strip().lower().rstrip(".")
+    if not host:
+        raise ValueError("Empty host scope rule is not allowed.")
+    return host
+
+
+def _normalize_url_prefix(value: str) -> str:
+    parsed = urlsplit(value.strip())
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"Invalid URL scope prefix: '{value}'. Use a full http/https URL.")
+    normalized = SplitResult(
+        scheme=parsed.scheme.lower(),
+        netloc=parsed.netloc.lower(),
+        path=parsed.path or "/",
+        query=parsed.query,
+        fragment="",
+    )
+    return urlunsplit(normalized)
+
+
+def _parse_target(target: str) -> ScopeTarget:
+    raw = target.strip()
+    parsed_url: str | None = None
+
+    if "://" in raw:
+        parsed = urlsplit(raw)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        parsed_url = urlunsplit(
+            SplitResult(
+                scheme=parsed.scheme.lower(),
+                netloc=parsed.netloc.lower(),
+                path=parsed.path or "/",
+                query=parsed.query,
+                fragment="",
+            )
+        )
+    else:
+        pseudo = urlsplit(f"//{raw}")
+        host = (pseudo.hostname or raw.split("/", 1)[0]).lower().rstrip(".")
+
+    ip_obj = None
+    try:
+        ip_obj = ip_address(host)
+    except ValueError:
+        ip_obj = None
+
+    return ScopeTarget(raw=raw, host=host, normalized_url=parsed_url, ip=ip_obj)
+
+
+def _rule_matches(rule: ScopeRule, target: ScopeTarget) -> bool:
+    if not target.host:
+        return False
+
+    if rule.kind == "host_exact":
+        return target.host == rule.value
+    if rule.kind == "host_wildcard":
+        return target.host.endswith("." + rule.value) and target.host != rule.value
+    if rule.kind == "url_prefix":
+        return target.normalized_url is not None and target.normalized_url.startswith(rule.value)
+    if rule.kind == "cidr":
+        return target.ip is not None and target.ip in rule.value
+    return False

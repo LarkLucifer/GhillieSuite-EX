@@ -36,7 +36,7 @@ from ghilliesuite_ex import __app_name__, __version__
 from ghilliesuite_ex.arsenal import check_binaries
 from ghilliesuite_ex.config import validate_config
 from ghilliesuite_ex.state.db import StateDB
-from ghilliesuite_ex.utils.scope import load_scope
+from ghilliesuite_ex.utils.scope import load_scope, validate_target_scope
 from ghilliesuite_ex.utils.ui import print_banner
 
 def _ensure_utf8_stdio() -> None:
@@ -536,13 +536,15 @@ async def _async_hunt(
 
     console.print(f"[green]✔[/green] Scope loaded: {', '.join(scope_domains)}")
 
-    # Validate target is in scope
-    from ghilliesuite_ex.utils.scope import is_in_scope
-    if not is_in_scope(target, scope_domains):
+    # Validate target is in scope before any scan starts
+    try:
+        validate_target_scope(target, scope_domains)
+    except ValueError as exc:
         console.print(
-            f"[bold red]❌ Target '{target}' is NOT in the provided scope![/bold red]\n"
+            f"[bold red]❌ Target rejected by scope preflight.[/bold red]\n"
+            f"   Reason: {exc}\n"
             f"   Scope: {', '.join(scope_domains)}\n"
-            f"   Add the target to your scope file or --scope string and retry."
+            "   Adjust the target or scope rules and retry."
         )
         raise typer.Exit(code=1)
 

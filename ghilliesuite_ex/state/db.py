@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 
 import aiosqlite
+from ghilliesuite_ex.utils.scope import is_in_scope
 
 from .models import CVEResult, Endpoint, Finding, Host, Service, Screenshot
 
@@ -252,7 +253,7 @@ class StateDB:
             for r in rows
         ]
         if scope_domains:
-            hosts = [h for h in hosts if _is_in_scope(h.domain, scope_domains)]
+            hosts = [h for h in hosts if is_in_scope(h.domain, scope_domains)]
         return hosts
 
     # -------- Services --------
@@ -502,11 +503,3 @@ class StateDB:
 
 # ── Scope helpers ─────────────────────────────────────────────────────────────
 
-def _is_in_scope(domain: str, scope_domains: list[str]) -> bool:
-    """Return True if domain matches any entry in scope_domains (wildcard aware)."""
-    domain = domain.lower().strip()
-    for sd in scope_domains:
-        sd = sd.lower().strip().lstrip("*.")
-        if domain == sd or domain.endswith("." + sd):
-            return True
-    return False
