@@ -28,9 +28,17 @@ dependencies = [
     "python-dotenv>=1.0",
     "aiosqlite>=0.20",
     "nest-asyncio>=1.5",
-    "playwright>=1.43",
+    "curl_cffi>=0.7",
     "requests>=2.32",
     "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+browser = [
+    "playwright>=1.43",
+]
+dev = [
+    "pytest>=8.0",
 ]
 
 [project.scripts]

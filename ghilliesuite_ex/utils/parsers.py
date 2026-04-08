@@ -669,10 +669,9 @@ def parse_arjun(output: str = "", output_path: Path | None = None) -> list[dict[
         if not line:
             continue
         # Example: "https://example.com/api: param1, param2"
-        if ":" in line and "http" in line:
-            left, right = line.split(":", 1)
-            url = left.strip()
-            params = [p.strip() for p in right.split(",") if p.strip()]
+        if ": " in line and line.startswith(("http://", "https://")):
+            url, param_text = line.rsplit(": ", 1)
+            params = [p.strip() for p in param_text.split(",") if p.strip()]
             if url and params:
                 results.append({"url": url, "method": "GET", "params": params})
     return results

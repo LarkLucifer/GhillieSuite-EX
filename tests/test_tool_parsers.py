@@ -46,6 +46,12 @@ class TestToolParsers(unittest.TestCase):
         self.assertEqual(res[0]["url"], "https://example.com/api")
         self.assertIn("a", res[0]["params"])
 
+    def test_parse_arjun_line_with_port(self) -> None:
+        text = "https://example.com:8443/api: token, redirect\n"
+        res = parse_arjun(output=text)
+        self.assertEqual(res[0]["url"], "https://example.com:8443/api")
+        self.assertEqual(res[0]["params"], ["token", "redirect"])
+
     def test_parse_subzy_json(self) -> None:
         text = '{"domain":"a.example.com","status":"VULNERABLE","vulnerable":true}\n'
         res = parse_subzy(output=text)

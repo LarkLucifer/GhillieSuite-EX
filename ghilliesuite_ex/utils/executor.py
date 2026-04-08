@@ -72,6 +72,8 @@ async def run_tool(
     Returns:
         ToolResult with stdout, stderr, returncode, and an error string if applicable.
     """
+    global _last_waf_block_time
+
     # Global Evasion Cooldown Check
     async with _cooldown_lock:
         now = time.time()
@@ -122,7 +124,6 @@ async def run_tool(
         # Detect WAF Blocks (403/429)
         combined = (stdout_text + stderr_text).lower()
         if "403 forbidden" in combined or "429 too many requests" in combined:
-            global _last_waf_block_time
             async with _cooldown_lock:
                 _last_waf_block_time = time.time()
         
@@ -179,6 +180,8 @@ async def run_tool_to_file(
         execution, otherwise None. .stdout will contain any progress text the
         tool wrote to stdout (usually empty for -silent tools).
     """
+    global _last_waf_block_time
+
     # Ensure parent directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -228,7 +231,6 @@ async def run_tool_to_file(
         # Detect WAF Blocks (403/429)
         combined = (stdout_text + stderr_text).lower()
         if "403 forbidden" in combined or "429 too many requests" in combined:
-            global _last_waf_block_time
             async with _cooldown_lock:
                 _last_waf_block_time = time.time()
                 

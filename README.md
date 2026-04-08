@@ -49,8 +49,10 @@ StateDB (SQLite via aiosqlite @ ~/GhillieSuite-EX/ghilliesuite_state.db)
 ```bash
 git clone <repo>
 cd GhillieSuite-EX
-pip install -e .
-playwright install chromium
+python3 -m pip install -e .
+# Optional browser tooling only when you want Playwright-backed checks:
+# python3 -m pip install -e .[browser]
+# python3 -m playwright install chromium
 ```
 
 ### 2. Configure
@@ -75,7 +77,7 @@ cp .env.example .env
 | gowitness | `go install github.com/sensepost/gowitness@latest` |
 | nuclei | `go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
 | dalfox | `go install github.com/hahwul/dalfox/v2@latest` |
-| sqlmap | `pip install sqlmap` |
+| sqlmap | `python3 -m pip install sqlmap` |
 | trufflehog | `go install github.com/trufflesecurity/trufflehog/v3@latest` |
 | **ffuf** | `go install github.com/ffuf/ffuf/v2@latest` |
 
@@ -84,6 +86,7 @@ cp .env.example .env
 ```bash
 GhillieSuite-EX.sec check-tools   # binary availability
 GhillieSuite-EX.sec check-config  # validates .env + shows detected AI provider
+python3 -m unittest discover -s tests -v  # baseline parser/DB regression tests
 ```
 
 ### 5. Hunt
