@@ -20,6 +20,7 @@ commands so authenticated endpoints are probed correctly.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import random
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -152,7 +153,16 @@ async def _probe_url(
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
                     "Accept-Language": "en-US,en;q=0.9",
                 }
-                return session.get(url, timeout=10, allow_redirects=_cfg.allow_redirects, headers=headers, verify=False)
+                response = session.get(
+                    url,
+                    timeout=10,
+                    allow_redirects=_cfg.allow_redirects,
+                    headers=headers,
+                    verify=False,
+                )
+                if inspect.isawaitable(response):
+                    response = await response
+                return response
             else:
                 # httpx client
                 ua = random.choice(_USER_AGENTS)

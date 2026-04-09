@@ -45,6 +45,20 @@ class ScopeSpec:
     def __getitem__(self, index):
         return self.entries[index]
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "entries": list(self.entries),
+            "rules": [
+                {
+                    "include": rule.include,
+                    "kind": rule.kind,
+                    "value": str(rule.value),
+                    "raw": rule.raw,
+                }
+                for rule in self.rules
+            ],
+        }
+
 
 @dataclass(frozen=True)
 class ScopeTarget:

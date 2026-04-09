@@ -58,6 +58,14 @@ def _report_safe_text(value) -> str:
     return redact_text(_safe_text(value))
 
 
+def _serialize_scope(scope) -> dict | list[str] | str:
+    if hasattr(scope, "to_dict"):
+        return scope.to_dict()
+    if isinstance(scope, (list, tuple)):
+        return [str(item) for item in scope]
+    return _safe_text(scope)
+
+
 def _extract_evidence_paths(text: str) -> tuple[str, str]:
     """Extract evidence request/response file paths from a finding's evidence text."""
     text = _safe_text(text)
@@ -114,7 +122,7 @@ class ReporterAgent(BaseAgent):
         report_data = {
             "target": target,
             "generated_at": now_utc.isoformat(),
-            "scope": self.scope,
+            "scope": _serialize_scope(self.scope),
             "scan_config": {
                 "ai_triage": {
                     "enabled": bool(getattr(self.cfg, "ai_enabled", False) and self.ai is not None),
