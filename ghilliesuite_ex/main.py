@@ -33,7 +33,7 @@ from rich.console import Console
 from rich.rule import Rule
 
 from ghilliesuite_ex import __app_name__, __version__
-from ghilliesuite_ex.arsenal import check_binaries
+from ghilliesuite_ex.arsenal import check_binaries, collect_tooling_status
 from ghilliesuite_ex.config import normalize_execution_profile, validate_config
 from ghilliesuite_ex.state.db import StateDB
 from ghilliesuite_ex.utils.scope import load_scope, validate_target_scope
@@ -599,8 +599,9 @@ async def _async_hunt(
 
     # ── Binary availability check ──────────────────────────────────────────
     console.print()
-    results = check_binaries(console)
-    missing = [name for name in ("subfinder", "katana") if not results.get(name)]
+    results = check_binaries(console, profile=cfg.execution_profile)
+    tooling_status = collect_tooling_status(profile=cfg.execution_profile)
+    missing = [name for name in tooling_status.required_tools if not results.get(name)]
     if missing:
         console.print(
             f"\n[bold red]Missing required recon tools:[/bold red] {', '.join(missing)}\n"
@@ -749,18 +750,55 @@ def _print_ai_disabled_log(reason: str) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 @app.command(name="check-tools")
-def check_tools() -> None:
-    """Show which security tool binaries are installed and available on PATH."""
+def check_tools(
+    profile: str = typer.Option(
+        "balanced",
+        "--profile",
+        help="Execution profile: vdp-safe, balanced, or aggressive.",
+        show_default=True,
+    ),
+) -> None:
+    """Show required tools, optional tooling, and profile-disabled binaries."""
     print_banner(console)
-    results = check_binaries(console)
-    missing = [name for name, found in results.items() if not found]
-    if missing:
+    try:
+        normalized_profile = normalize_execution_profile(profile)
+    except ValueError as exc:
+        console.print(f"[bold red]Profile error:[/bold red] {exc}\n")
+        raise typer.Exit(code=1)
+
+    results = check_binaries(console, profile=normalized_profile)
+    tooling_status = collect_tooling_status(profile=normalized_profile)
+    missing_required = [
+        name for name in tooling_status.required_tools if not results.get(name)
+    ]
+    missing_optional = [
+        name for name in tooling_status.optional_tools if not results.get(name)
+    ]
+    missing_deps = [
+        dep.name for dep in tooling_status.optional_dependencies if not dep.installed
+    ]
+    if missing_required:
         console.print(
-            f"\n[yellow]⚠  {len(missing)} tool(s) missing: {', '.join(missing)}[/yellow]"
+            f"\n[red]Missing required tools:[/red] {', '.join(missing_required)}"
         )
-        console.print("[dim]Install missing tools and ensure they are on your PATH.[/dim]\n")
+        console.print("[dim]Install them before running a full hunt.[/dim]")
     else:
-        console.print("\n[green]✔ All tools installed![/green]\n")
+        console.print("\n[green]Required tools ready for this profile.[/green]")
+
+    if missing_optional:
+        console.print(
+            f"[yellow]Optional binaries not installed:[/yellow] {', '.join(missing_optional)}"
+        )
+    if missing_deps:
+        console.print(
+            f"[yellow]Optional dependencies not installed:[/yellow] {', '.join(missing_deps)}"
+        )
+    if tooling_status.disabled_by_profile:
+        console.print(
+            f"[cyan]Disabled by profile '{normalized_profile}':[/cyan] "
+            f"{', '.join(tooling_status.disabled_by_profile)}"
+        )
+    console.print()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

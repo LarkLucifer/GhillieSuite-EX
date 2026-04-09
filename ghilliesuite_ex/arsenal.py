@@ -25,6 +25,7 @@ FILE I/O:
 
 from __future__ import annotations
 
+import importlib.util
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,15 @@ from rich.table import Table
 
 # ── Tools that accept auth headers via -H flag ────────────────────────────────
 _AUTH_HEADER_TOOLS = frozenset({"httpx", "katana", "nuclei", "dalfox", "sqlmap"})
+_REQUIRED_TOOL_NAMES = ("subfinder", "katana", "httpx", "nuclei")
+_OPTIONAL_DEPENDENCIES: tuple[tuple[str, str], ...] = (
+    ("playwright", "Python module for optional browser-backed checks"),
+)
+_PROFILE_DISABLED_TOOLS: dict[str, tuple[str, ...]] = {
+    "vdp-safe": ("nuclei", "dalfox", "sqlmap", "ffuf", "trufflehog"),
+    "balanced": (),
+    "aggressive": (),
+}
 
 # ── Default short wordlist for ffuf (bundled fallback) ────────────────────────
 # ── Default short wordlist for ffuf (bundled fallback) ────────────────────────
@@ -245,6 +255,23 @@ class ToolSpec:
 
     def __post_init__(self) -> None:
         self.supports_auth_headers = self.binary in _AUTH_HEADER_TOOLS
+
+
+@dataclass(frozen=True)
+class OptionalDependencyStatus:
+    name: str
+    description: str
+    installed: bool
+
+
+@dataclass(frozen=True)
+class ToolingStatus:
+    profile: str
+    installed: dict[str, bool]
+    required_tools: tuple[str, ...]
+    optional_tools: tuple[str, ...]
+    disabled_by_profile: tuple[str, ...]
+    optional_dependencies: tuple[OptionalDependencyStatus, ...]
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -663,26 +690,100 @@ def get_tool_descriptions(category_filter: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def check_binaries(console: Console | None = None) -> dict[str, bool]:
+def collect_tooling_status(profile: str = "balanced") -> ToolingStatus:
+    """Collect binary and optional dependency availability for a given profile."""
+    normalized = (profile or "balanced").strip().lower()
+    if normalized not in _PROFILE_DISABLED_TOOLS:
+        normalized = "balanced"
+
+    installed: dict[str, bool] = {
+        name: shutil.which(spec.binary) is not None
+        for name, spec in TOOL_REGISTRY.items()
+    }
+    disabled = tuple(_PROFILE_DISABLED_TOOLS.get(normalized, ()))
+    required = tuple(name for name in _REQUIRED_TOOL_NAMES if name not in disabled)
+    optional = tuple(
+        name for name in TOOL_REGISTRY
+        if name not in required and name not in disabled
+    )
+    optional_dependencies = tuple(
+        OptionalDependencyStatus(
+            name=name,
+            description=description,
+            installed=importlib.util.find_spec(name) is not None,
+        )
+        for name, description in _OPTIONAL_DEPENDENCIES
+    )
+    return ToolingStatus(
+        profile=normalized,
+        installed=installed,
+        required_tools=required,
+        optional_tools=optional,
+        disabled_by_profile=disabled,
+        optional_dependencies=optional_dependencies,
+    )
+
+
+def check_binaries(console: Console | None = None, profile: str = "balanced") -> dict[str, bool]:
     """
     Verify which tool binaries are present on PATH.
-    Prints a Rich table if a console is provided.
+    Prints categorized Rich tables when a console is provided.
 
     Returns:
-        Mapping of tool_name → bool (True = found on PATH).
+        Mapping of tool_name -> bool (True = found on PATH).
     """
-    results: dict[str, bool] = {}
-    for name, spec in TOOL_REGISTRY.items():
-        results[name] = shutil.which(spec.binary) is not None
+    status = collect_tooling_status(profile=profile)
 
     if console:
-        table = Table(title="Tool Arsenal — Binary Check", show_lines=True)
-        table.add_column("Tool", style="bold cyan")
-        table.add_column("Category", style="dim")
-        table.add_column("Status")
-        for name, found in results.items():
-            status = "[green]✔ installed[/green]" if found else "[red]✘ missing[/red]"
-            table.add_row(name, TOOL_REGISTRY[name].category, status)
-        console.print(table)
+        required_table = Table(
+            title=f"Required Tools ({status.profile})",
+            show_lines=True,
+        )
+        required_table.add_column("Tool", style="bold cyan")
+        required_table.add_column("Category", style="dim")
+        required_table.add_column("Status")
+        for name in status.required_tools:
+            found = status.installed.get(name, False)
+            required_table.add_row(
+                name,
+                TOOL_REGISTRY[name].category,
+                "[green]installed[/green]" if found else "[red]missing[/red]",
+            )
+        console.print(required_table)
 
-    return results
+        optional_table = Table(title="Optional Binaries", show_lines=True)
+        optional_table.add_column("Tool", style="bold cyan")
+        optional_table.add_column("Category", style="dim")
+        optional_table.add_column("Status")
+        for name in status.optional_tools:
+            found = status.installed.get(name, False)
+            optional_table.add_row(
+                name,
+                TOOL_REGISTRY[name].category,
+                "[green]installed[/green]" if found else "[yellow]missing[/yellow]",
+            )
+        console.print(optional_table)
+
+        deps_table = Table(title="Optional Dependencies", show_lines=True)
+        deps_table.add_column("Dependency", style="bold cyan")
+        deps_table.add_column("Purpose", style="dim")
+        deps_table.add_column("Status")
+        for dep in status.optional_dependencies:
+            deps_table.add_row(
+                dep.name,
+                dep.description,
+                "[green]installed[/green]" if dep.installed else "[yellow]missing[/yellow]",
+            )
+        console.print(deps_table)
+
+        disabled_table = Table(title="Disabled By Profile", show_lines=True)
+        disabled_table.add_column("Tool", style="bold cyan")
+        disabled_table.add_column("Reason", style="dim")
+        if status.disabled_by_profile:
+            for name in status.disabled_by_profile:
+                disabled_table.add_row(name, f"Disabled in profile '{status.profile}'")
+        else:
+            disabled_table.add_row("-", f"No binaries disabled in profile '{status.profile}'")
+        console.print(disabled_table)
+
+    return status.installed

@@ -245,16 +245,15 @@ GhillieSuite-EX.sec hunt \
 | **CVE Hunter (pre-fuzz)** | **nuclei (cves/ templates)** | Critical only |
 | XSS exploitation | dalfox | ✅ Always |
 | SQL injection | sqlmap | ✅ Always |
-| **Directory brute-force** | **ffuf (Context-Aware)** | — (Auto) |
-| **SSRF parameter fuzzing** | **ffuf** | **✅ Always** (unless `--force-auto`) |
-| **Cloud Metadata SSRF** | **Active Param Fuzzing** | — |
+| **Directory brute-force** | **ffuf (Context-Aware)** | Balanced / Aggressive |
+| **SSRF parameter fuzzing** | **ffuf** | Aggressive only |
+| **Cloud Metadata SSRF** | **Active Param Fuzzing** | Balanced / Aggressive |
 | **Cache Poisoning** | **Unkeyed Header Probe** | — |
-| **BOLA / IDOR detection** | Active Differential Analysis | — |
-| **React 19 RSC Parsing** | Active Leak Discovery | — |
-| **Prototype Pollution** | Playwright Sandbox Verification | — |
-| **WebSocket Hijacking** | Active CSWSH Probing | — |
+| **BOLA / IDOR detection** | Active Differential Analysis | Balanced / Aggressive |
+| **React 19 RSC Parsing** | Active Leak Discovery | Balanced / Aggressive |
+| **Prototype Pollution** | Passive JS sink inspection | — |
 | **AI/LLM Prompt Injection** | Passive advisor | — |
-| Secret scanning | trufflehog / Regex | — |
+| Secret scanning | trufflehog / JS regex | Balanced / Aggressive |
 
 ### False Positive Suppression & HTTP Validation
 All discovered findings pass through an `httpx` validation layer. 404 endpoints are downgraded to `info` (`[Historical/Inactive]`), and pages returning 200 OK with "Access Denied" or "Login Required" text in the body are flagged as `[False Positive / Fake 200]` to save triage time.
@@ -268,8 +267,7 @@ All discovered findings pass through an `httpx` validation layer. 404 endpoints 
 - `--profile aggressive`: full arsenal mode. Enables broader fuzzing paths, including `ffuf` SSRF fuzzing and WAF-evasion mutation stages.
 
 ### Current Implementation Notes
-- Prototype Pollution is currently a passive JS sink inspection stage. The older Playwright sandbox verification path is not part of the active pipeline.
-- WebSocket / CSWSH probing is not wired into the current release pipeline.
+- Prototype Pollution is currently a passive JS sink inspection stage.
 - Secret scanning is currently provided by JS secret inspection plus `trufflehog` in `balanced` and `aggressive` profiles.
 
 ### Deep Research & Execution (Tier 0-9 Attacks)
