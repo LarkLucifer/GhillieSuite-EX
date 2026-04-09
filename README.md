@@ -16,7 +16,7 @@ GhillieSuite-EX has evolved from a multi-tool wrapper into a **strict, evasion-f
 - **Global Evasion Cooldown (WAF Safe):** NEW: The pipeline now automatically detects HTTP 403 Forbidden and 429 Too Many Requests responses from ALL underlying tools. If a WAF block is detected, the hunt globally pauses for 60 seconds to cool down the IP and prevent permanent blacklisting—perfect for home connections (Parrot OS).
 - **Stealthy Tool Throttling:** Tools like Dalfox and Nuclei are dynamically throttled in `--stealth` mode (e.g. 5 threads for Dalfox) to maintain a human-like request profile.
 - **Targeted Tool Execution:** SQLMap and Arjun execute with surgical precision—SQLMap triggers *only* on parameterized URLs (`?id=`), and Arjun scans *only* unique base paths to preserve bandwidth and stealth.
-- **Isolated Custom Agents (VaultScout & ProtoGhost):** Extensible architecture featuring dedicated VaultScout (deep git/env secret scanning) and ProtoGhost (Playwright-driven Prototype Pollution sandbox verification).
+- **Profile-Driven Execution:** `--profile vdp-safe|balanced|aggressive` cleanly separates low-noise VDP workflows from broader exploit and fuzzing runs.
 
 ---
 
@@ -262,14 +262,23 @@ All discovered findings pass through an `httpx` validation layer. 404 endpoints 
 ### Context-Aware Orchestration (TechStackDetector)
 `ffuf` is dynamically injected with smart wordlists based on the detected tech stack (`PHP/Laravel`, `Java/Spring`, `Node.js`), drastically optimizing the directory brute-force phase.
 
+### Execution Profiles
+- `--profile vdp-safe`: low-noise advisory workflow only. No brute forcing, no broad fuzzing, and no aggressive exploit stages.
+- `--profile balanced`: targeted exploitation plus advisory checks. `ffuf` directory brute force is allowed here, but broad fuzzing stays constrained.
+- `--profile aggressive`: full arsenal mode. Enables broader fuzzing paths, including `ffuf` SSRF fuzzing and WAF-evasion mutation stages.
+
+### Current Implementation Notes
+- Prototype Pollution is currently a passive JS sink inspection stage. The older Playwright sandbox verification path is not part of the active pipeline.
+- WebSocket / CSWSH probing is not wired into the current release pipeline.
+- Secret scanning is currently provided by JS secret inspection plus `trufflehog` in `balanced` and `aggressive` profiles.
+
 ### Deep Research & Execution (Tier 0-9 Attacks)
 - **4-Stage Crash-Proof Pipeline**: The `ExploitAgent` strictly executes Recon → VulnScan → Contextual Exploitation → Advanced Logic. Every stage is wrapped in a global exception handler, guaranteeing a 100% stable 4-day unattended run.
 - **Enterprise WAF & IP Resilience**: Integrating `curl_cffi` for perfect Google Chrome TLS/JA3 impersonation, alongside rotating User-Agents and Jitter delays. The built-in **WAF Evasion Engine** (`--waf-evasion`) fingerprints over 30 WAF vendors and mutates payloads intelligently. A global `--proxy` argument cascades to all subprocesses (sqlmap, nuclei, dalfox) to prevent ISP blacklisting and allow endless IP rotation.
 - **Cloud Metadata SSRF**: SSRF-prone endpoints are dynamically injected with AWS/GCP/Azure payloads (e.g., `169.254.169.254/latest/meta-data`). Responses are flagged if they contain cloud credentials or IAM profiles.
 - **Cache Poisoning**: Unkeyed headers (`X-Forwarded-Host`, `X-Host`) are sent with canary hostnames to verify reflection and edge cache pollution vulnerabilities.
-- **Prototype Pollution 2.0**: JS sinks are dynamically tested in a headless `playwright` sandbox to actively verify standard payload injections via `Object.assign`. Successfully poisoned objects are auto-promoted to critical severity with a VERIFIED label.
+- **Prototype Pollution**: JS assets are inspected for high-signal prototype pollution sinks and reported as passive leads for manual verification.
 - **React 19 / Next.js Flight**: Inspects `.json` paths and passes custom `RSC: 1` headers to intercept React Server Component leaks to decode hardcoded developer secrets and insecure prop drilling payloads.
-- **WebSocket Piracy**: Analyzes discovered `ws://` / `wss://` sockets for unauthenticated event ingestion (`{event: "auth"}`) and Cross-Site WebSocket Hijacking (CSWSH) without SOP blocking.
 
 ### BOLA/IDOR Detection (Differential Analysis)
 The ExploitAgent scans endpoints for integer (`/user/123`) and UUID segments. When an integer ID is found, it performs active **Differential Analysis** using `httpx` to fuzz `id+1` and `id-1`. If the HTTP response length changes significantly, the finding is automatically elevated to a **CRITICAL** status with a glowing red **VERIFIED** HTML badge.

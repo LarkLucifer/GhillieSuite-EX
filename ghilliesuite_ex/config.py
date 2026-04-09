@@ -28,6 +28,16 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=False)
 # ── Key-prefix detection constants ─────────────────────────────────────────────
 _OPENAI_PREFIX = "sk-"
 _GEMINI_PREFIX = "AIza"
+VALID_EXECUTION_PROFILES = ("vdp-safe", "balanced", "aggressive")
+
+
+def normalize_execution_profile(value: str | None) -> str:
+    """Normalize and validate the runtime execution profile."""
+    profile = (value or "balanced").strip().lower()
+    if profile not in VALID_EXECUTION_PROFILES:
+        allowed = ", ".join(VALID_EXECUTION_PROFILES)
+        raise ValueError(f"Invalid execution profile '{value}'. Expected one of: {allowed}.")
+    return profile
 
 
 def detect_ai_provider() -> tuple[str, str]:
@@ -81,6 +91,12 @@ class Config:
     ai_enabled: bool = field(init=False, default=False)
     ai_status_message: str = field(init=False, default="AI triage disabled")
     ai_disabled_reason: str = field(init=False, default="")
+
+    execution_profile: str = field(
+        default_factory=lambda: normalize_execution_profile(
+            os.getenv("EXECUTION_PROFILE", "balanced")
+        )
+    )
 
     # —— Optional fallback provider (used when primary refuses/blocks)
     ai_fallback_provider: str = field(
@@ -308,11 +324,16 @@ class Config:
 
     def __post_init__(self) -> None:
         """Run auto-detection immediately after the dataclass is initialised."""
+        self.execution_profile = normalize_execution_profile(self.execution_profile)
         self.ai_provider, self.active_api_key = detect_ai_provider()
         if self.ai_provider != "none" and self.active_api_key:
             self.enable_ai()
         else:
             self.disable_ai("No AI provider API key configured.")
+
+    def set_execution_profile(self, profile: str) -> None:
+        """Update the execution profile after CLI parsing."""
+        self.execution_profile = normalize_execution_profile(profile)
 
     def enable_ai(self) -> None:
         """Mark AI triage as available for this run."""

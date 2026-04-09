@@ -203,6 +203,7 @@ class HtmlReporter:
             "js_llm_timeout": self.cfg.js_llm_timeout,
         }
         execution_flags = {
+            "execution_profile": getattr(self.cfg, "execution_profile", "balanced"),
             "force_exploit": bool(getattr(self.cfg, "force_exploit", False)),
             "ai_triage_status": getattr(self.cfg, "ai_status_message", "AI triage disabled"),
             "ai_triage_reason": getattr(self.cfg, "ai_disabled_reason", ""),
@@ -583,11 +584,15 @@ def _render_html(
     <section>
       <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs">Execution Flags</h2>
       <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 text-sm text-gray-300">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-            <div class="text-xs text-gray-500">Force Exploit</div>
-            <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("force_exploit", False)))}</div>
-          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+              <div class="text-xs text-gray-500">Execution Profile</div>
+              <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("execution_profile", "balanced")))}</div>
+            </div>
+            <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+              <div class="text-xs text-gray-500">Force Exploit</div>
+              <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("force_exploit", False)))}</div>
+            </div>
           <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
             <div class="text-xs text-gray-500">AI Triage</div>
             <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("ai_triage_status", "AI triage disabled")))}</div>

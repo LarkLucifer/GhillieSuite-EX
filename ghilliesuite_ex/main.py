@@ -34,7 +34,7 @@ from rich.rule import Rule
 
 from ghilliesuite_ex import __app_name__, __version__
 from ghilliesuite_ex.arsenal import check_binaries
-from ghilliesuite_ex.config import validate_config
+from ghilliesuite_ex.config import normalize_execution_profile, validate_config
 from ghilliesuite_ex.state.db import StateDB
 from ghilliesuite_ex.utils.scope import load_scope, validate_target_scope
 from ghilliesuite_ex.utils.ui import print_banner
@@ -150,6 +150,12 @@ def hunt(
         "--nuclei-http-timeout",
         help="Nuclei per-request timeout in seconds (maps to -timeout).",
         show_default=False,
+    ),
+    profile: str = typer.Option(
+        "balanced",
+        "--profile",
+        help="Execution profile: vdp-safe, balanced, or aggressive.",
+        show_default=True,
     ),
     safe_mode: bool = typer.Option(
         False,
@@ -323,6 +329,7 @@ def hunt(
         nuclei_rate_limit=nuclei_rate_limit,
         nuclei_concurrency=nuclei_concurrency,
         nuclei_http_timeout=nuclei_http_timeout,
+        profile=profile,
         safe_mode=safe_mode,
         update_templates=update_templates,
         stealth=stealth,
@@ -367,6 +374,7 @@ async def _async_hunt(
     nuclei_rate_limit: int | None,
     nuclei_concurrency: int | None,
     nuclei_http_timeout: int | None,
+    profile: str,
     safe_mode: bool,
     update_templates: bool,
     stealth: bool,
@@ -417,6 +425,12 @@ async def _async_hunt(
     # ── Store auth credentials in global config ────────────────────────────
     # These are set here (not in Config.__init__) because they are per-session
     # CLI values, not environment variables.
+    try:
+        cfg.set_execution_profile(normalize_execution_profile(profile))
+    except ValueError as exc:
+        console.print(f"[bold red]Profile error:[/bold red] {exc}")
+        raise typer.Exit(code=1)
+
     if cookie:
         cfg.auth_cookie = cookie.strip()
     if header:
@@ -430,6 +444,24 @@ async def _async_hunt(
     cfg.waf_evasion = bool(waf_evasion)
     cfg.output_dir = output_dir
     cfg.evidence_dir = evidence_dir
+
+    console.print(
+        "[bold cyan]Execution profile:[/bold cyan] "
+        f"[bold]{cfg.execution_profile}[/bold]"
+    )
+    if cfg.execution_profile == "vdp-safe":
+        console.print(
+            "[dim]  Passive and low-noise checks only. Broad exploitation and brute forcing stay disabled.[/dim]"
+        )
+    elif cfg.execution_profile == "balanced":
+        console.print(
+            "[dim]  Targeted exploitation plus advisory checks. Broad fuzzing remains constrained.[/dim]"
+        )
+    else:
+        console.print(
+            "[dim]  Full arsenal enabled, including broad fuzzing paths and aggressive exploit stages.[/dim]"
+        )
+    console.print()
 
     if force_exploit:
         console.print(
@@ -450,6 +482,15 @@ async def _async_hunt(
             f"max_retries={cfg.waf_max_retries}[/dim]"
         )
         console.print()
+
+    if cfg.execution_profile != "aggressive" and force_exploit:
+        console.print(
+            "[yellow]  force-exploit requested, but the active profile will still block broad exploit-only paths until aggressive mode is selected.[/yellow]"
+        )
+    if cfg.execution_profile != "aggressive" and waf_evasion:
+        console.print(
+            "[yellow]  waf-evasion requested, but deterministic mutation stages stay disabled outside the aggressive profile.[/yellow]"
+        )
 
     if allow_redirects:
         cfg.allow_redirects = True

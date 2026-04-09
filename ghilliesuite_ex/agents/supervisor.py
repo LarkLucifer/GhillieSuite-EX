@@ -140,7 +140,14 @@ class SupervisorAgent(BaseAgent):
                 reason = ""
                 if self.cfg.ai_planner:
                     tool_override, reason = await self._ai_advisory_tool_choice()
-                agent_panel(self.console, "ExploitAgent", "nuclei, dalfox, sqlmap, ffuf", target, loop_idx, self.max_loops)
+                agent_panel(
+                    self.console,
+                    "ExploitAgent",
+                    "nuclei, dalfox, sqlmap, ffuf, js_secret, proto, rsc, trufflehog",
+                    target,
+                    loop_idx,
+                    self.max_loops,
+                )
                 res_exploit = await self.exploit_agent.run(
                     AgentTask(target=target, safe_mode=self.safe_mode, tool_name=tool_override, reason=reason)
                 )
