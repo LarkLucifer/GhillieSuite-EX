@@ -83,6 +83,9 @@ class BaseAgent(ABC):
         Handles both Gemini (google-generativeai) and a minimal OpenAI shim.
         Returns an empty string on failure (caller must handle gracefully).
         """
+        if not getattr(self.cfg, "ai_enabled", True) or self.ai is None:
+            return ""
+
         retries = int(getattr(self.cfg, "ai_retries", 3) or 3)
         timeout = float(getattr(self.cfg, "ai_timeout", 60.0) or 60.0)
         backoff = float(getattr(self.cfg, "ai_retry_backoff", 1.5) or 1.5)
@@ -122,6 +125,14 @@ class BaseAgent(ABC):
                     await asyncio.sleep(backoff * attempt)
                 else:
                     self.console.print(f"[red]AI error in {self.name}: {exc}[/red]")
+
+        if last_exc is not None and getattr(self.cfg, "ai_enabled", False):
+            reason = f"{type(last_exc).__name__}: {last_exc}"
+            self.cfg.disable_ai(reason)
+            self.console.print(
+                "[yellow]AI triage disabled for the rest of this run. "
+                "Continuing with non-AI execution.[/yellow]"
+            )
 
         return ""
 

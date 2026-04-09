@@ -1,0 +1,145 @@
+import io
+import shutil
+import unittest
+from pathlib import Path
+from uuid import uuid4
+
+from rich.console import Console
+
+from ghilliesuite_ex.agents.base import AgentResult, AgentTask, BaseAgent
+from ghilliesuite_ex.agents.reporter import ReporterAgent
+from ghilliesuite_ex.config import Config
+from ghilliesuite_ex.state.db import StateDB
+from ghilliesuite_ex.state.models import Endpoint, Finding, Host
+from ghilliesuite_ex.utils.redaction import redact_text
+
+
+class _DummyAgent(BaseAgent):
+    async def run(self, task: AgentTask) -> AgentResult:
+        return AgentResult(agent=self.name, status="ok", summary="noop")
+
+
+class _FailingAI:
+    def generate_content(self, prompt: str):
+        raise TimeoutError("simulated timeout")
+
+
+class TestRedaction(unittest.TestCase):
+    def test_redact_sensitive_headers_and_tokens(self) -> None:
+        raw = (
+            "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.secret.signature\n"
+            "Cookie: sessionid=supersecret; csrftoken=anothersecret\n"
+            "X-API-Key: topsecretapikey1234567890\n"
+            "GET /api?api_key=querysecret123456&token=othertoken999 HTTP/1.1\n"
+            "openai_key=sk-abcdefghijklmnopQRSTUV1234567890\n"
+            "github=ghp_abcdefghijklmnopqrstuvwxyz1234567890\n"
+        )
+        redacted = redact_text(raw)
+
+        self.assertIn("Authorization: [REDACTED]", redacted)
+        self.assertIn("Cookie: [REDACTED]", redacted)
+        self.assertIn("X-API-Key: [REDACTED]", redacted)
+        self.assertIn("[REDACTED_SECRET]", redacted)
+
+        self.assertNotIn("sessionid=supersecret", redacted)
+        self.assertNotIn("querysecret123456", redacted)
+        self.assertNotIn("sk-abcdefghijklmnopQRSTUV1234567890", redacted)
+        self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz1234567890", redacted)
+
+
+class TestAIFallback(unittest.IsolatedAsyncioTestCase):
+    async def test_base_agent_disables_ai_after_timeout(self) -> None:
+        config = Config()
+        config.enable_ai()
+        config.ai_retries = 1
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _DummyAgent(
+                db=db,
+                ai_client=_FailingAI(),
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+            result = await agent._ask_ai("hello")
+
+        self.assertEqual(result, "")
+        self.assertFalse(config.ai_enabled)
+        self.assertIn("simulated timeout", config.ai_disabled_reason.lower())
+
+
+class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
+    async def test_reports_redact_secrets_and_mark_ai_disabled(self) -> None:
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+        tmp_path = Path("tmp") / f"reporter_safety_{uuid4().hex}"
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        try:
+            evidence_dir = tmp_path / "evidence"
+            output_dir = tmp_path / "reports"
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            req_path = evidence_dir / "captured.request.txt"
+            res_path = evidence_dir / "captured.response.txt"
+            req_path.write_text(
+                "GET /api?api_key=querysecret123456 HTTP/1.1\n"
+                "Authorization: Bearer bearersecret123456789\n"
+                "Cookie: sessionid=supersecret\n",
+                encoding="utf-8",
+            )
+            res_path.write_text(
+                "HTTP/1.1 200 OK\n"
+                "Set-Cookie: sessionid=serversecret\n\n"
+                "{\"token\":\"ghp_abcdefghijklmnopqrstuvwxyz1234567890\"}",
+                encoding="utf-8",
+            )
+
+            config = Config()
+            config.disable_ai("No API key configured.")
+            config.output_dir = str(output_dir)
+            config.evidence_dir = str(evidence_dir)
+
+            async with StateDB(":memory:", target="example.com") as db:
+                await db.insert_host(Host(domain="example.com", status_code=200, tech_stack="nginx"))
+                await db.insert_endpoint(Endpoint(url="https://example.com/api?api_key=querysecret123456"))
+                await db.insert_finding(
+                    Finding(
+                        tool="sqlmap",
+                        target="https://example.com/api",
+                        severity="high",
+                        title="SQL Injection",
+                        evidence=(
+                            f"Evidence Request: {req_path}\n"
+                            f"Evidence Response: {res_path}\n"
+                            "Authorization: Bearer bearersecret123456789"
+                        ),
+                        reproducible_steps="Use Cookie: sessionid=supersecret",
+                        raw_output="openai=sk-abcdefghijklmnopQRSTUV1234567890",
+                    )
+                )
+
+                reporter = ReporterAgent(
+                    db=db,
+                    ai_client=None,
+                    scope=["example.com"],
+                    console=console,
+                    config=config,
+                )
+                await reporter.run(AgentTask(target="example.com"))
+
+            report_files = list(output_dir.glob("*.*"))
+            self.assertTrue(any(path.suffix == ".json" for path in report_files))
+            self.assertTrue(any(path.suffix == ".md" for path in report_files))
+            self.assertTrue(any(path.suffix == ".html" for path in report_files))
+
+            for path in report_files:
+                content = path.read_text(encoding="utf-8", errors="replace")
+                self.assertIn("AI triage disabled", content)
+                self.assertNotIn("sessionid=supersecret", content)
+                self.assertNotIn("querysecret123456", content)
+                self.assertNotIn("bearersecret123456789", content)
+                self.assertNotIn("sk-abcdefghijklmnopQRSTUV1234567890", content)
+                self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz1234567890", content)
+        finally:
+            shutil.rmtree(tmp_path, ignore_errors=True)

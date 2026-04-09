@@ -398,13 +398,21 @@ async def _async_hunt(
     print_banner(console)
 
     # ── Auto-detect AI provider + validate ────────────────────────────────
-    try:
-        resolved_provider = validate_config()   # auto-detect; raises if none found
-    except RuntimeError as exc:
-        console.print(f"[bold red]Configuration error:[/bold red]\n{exc}")
-        raise typer.Exit(code=1)
-
-    _print_provider_log(resolved_provider)
+    ai_status_logged = False
+    if cfg.ai_provider != "none" and cfg.active_api_key:
+        try:
+            resolved_provider = validate_config()
+        except RuntimeError as exc:
+            cfg.disable_ai(str(exc).splitlines()[0])
+            _print_ai_disabled_log(cfg.ai_disabled_reason)
+            ai_status_logged = True
+        else:
+            cfg.enable_ai()
+            _print_provider_log(resolved_provider)
+    else:
+        cfg.disable_ai("No API key configured.")
+        _print_ai_disabled_log(cfg.ai_disabled_reason)
+        ai_status_logged = True
 
     # ── Store auth credentials in global config ────────────────────────────
     # These are set here (not in Config.__init__) because they are per-session
@@ -572,13 +580,12 @@ async def _async_hunt(
 
     # ── Initialise AI client ───────────────────────────────────────────────
     ai_client = _build_ai_client(cfg)
+    if ai_client is None and not ai_status_logged:
+        _print_ai_disabled_log(cfg.ai_disabled_reason or "AI client unavailable.")
 
     # ── Environment sanity checks ──────────────────────────────────────────
-    import os
-    import sqlite3
-
-    db_file = cfg.db_path
-    if os.path.exists(db_file):
+    # Target isolation is handled centrally inside StateDB.
+    if False:  # Legacy DB reset path intentionally disabled; StateDB owns target isolation.
         try:
             with sqlite3.connect(db_file) as conn:
                 cursor = conn.cursor()
@@ -636,25 +643,33 @@ async def _async_hunt(
 def _build_ai_client(config):
     """
     Construct the AI client using the auto-detected provider stored in cfg.
-    Called once during hunt startup after validate_config() succeeds.
+    Returns None when AI is disabled or client initialisation fails.
     """
+    if not getattr(config, "ai_enabled", False):
+        return None
+
     provider = config.ai_provider
 
-    if provider == "openai":
-        from openai import AsyncOpenAI
-        return AsyncOpenAI(api_key=config.openai_api_key)
+    try:
+        if provider == "openai":
+            from openai import AsyncOpenAI
+            return AsyncOpenAI(api_key=config.openai_api_key)
 
-    if provider == "gemini":
-        import google.generativeai as genai
-        genai.configure(api_key=config.gemini_api_key)
-        return genai.GenerativeModel(
-            model_name=config.gemini_model,           # gemini-2.5-pro
-            generation_config={"temperature": 0.2, "max_output_tokens": 1024},
-        )
+        if provider == "gemini":
+            import google.generativeai as genai
+            genai.configure(api_key=config.gemini_api_key)
+            return genai.GenerativeModel(
+                model_name=config.gemini_model,
+                generation_config={"temperature": 0.2, "max_output_tokens": 1024},
+            )
 
     # Should never reach here — validate_config() already caught this
-    console.print(f"[bold red]No AI client could be built for provider '{provider}'.[/bold red]")
-    raise typer.Exit(code=1)
+    except Exception as exc:
+        config.disable_ai(f"{provider} client init failed: {exc}")
+        return None
+
+    config.disable_ai(f"Unsupported AI provider '{provider}'.")
+    return None
 
 
 def _print_provider_log(provider: str) -> None:
@@ -672,6 +687,18 @@ def _print_provider_log(provider: str) -> None:
     console.print(
         f"  [bold {color}][+] Auto-detected AI Provider: {label}[/bold {color}]  "
         f"[dim]model: {model}[/dim]"
+    )
+    console.print()
+
+
+def _print_ai_disabled_log(reason: str) -> None:
+    detail = reason or "No AI provider available."
+    console.print(
+        "  [bold yellow][+] AI triage disabled[/bold yellow]  "
+        f"[dim]{detail}[/dim]"
+    )
+    console.print(
+        "[dim]  Falling back to standard recon, scope enforcement, and rate-limited exploit scans.[/dim]"
     )
     console.print()
 

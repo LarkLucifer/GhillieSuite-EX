@@ -149,6 +149,12 @@ class StateDB:
                     (self._target,),
                 )
                 await self._conn.commit()
+            elif stored_target is None:
+                await self._conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('target', ?)",
+                    (self._target,),
+                )
+                await self._conn.commit()
 
         return self
 

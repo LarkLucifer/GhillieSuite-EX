@@ -27,7 +27,7 @@ import asyncio
 import base64
 import html as _html
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ from rich.console import Console
 from ghilliesuite_ex.config import Config, cfg as global_cfg
 from ghilliesuite_ex.state.db import StateDB
 from ghilliesuite_ex.state.models import Finding, Host, Endpoint, Screenshot
+from ghilliesuite_ex.utils.redaction import redact_text
 
 
 # ── Severity metadata ─────────────────────────────────────────────────────────────────────
@@ -80,6 +81,10 @@ def _safe_text(value: Any) -> str:
         return text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
 
 
+def _report_safe_text(value: Any) -> str:
+    return redact_text(_safe_text(value))
+
+
 def _extract_evidence_paths(text: str) -> tuple[str, str]:
     """Extract evidence request/response file paths from a finding's evidence."""
     text = _safe_text(text)
@@ -101,7 +106,7 @@ def _read_text_safe(path: str, max_chars: int = _MAX_EVIDENCE_CHARS) -> str:
         text = p.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
-    return text[:max_chars]
+    return redact_text(text)[:max_chars]
 
 
 def _image_data_uri(path: str) -> str:
@@ -155,7 +160,7 @@ class HtmlReporter:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         safe_target = target.replace(".", "_").replace("/", "_").replace(":", "")
         html_path = output_path / f"{safe_target}_{ts}.html"
 
@@ -183,7 +188,10 @@ class HtmlReporter:
             self.console.print(f"[yellow]  ⚠ Failed to load screenshots: {exc}[/yellow]")
             screenshots = []
 
-        self.console.print(f"[cyan]  Generating AI summaries for {len(findings)} finding(s)…[/cyan]")
+        if getattr(self.cfg, "ai_enabled", False) and self.ai is not None:
+            self.console.print(f"[cyan]  Generating AI summaries for {len(findings)} finding(s)…[/cyan]")
+        else:
+            self.console.print("[yellow]  AI triage disabled — using fallback summaries.[/yellow]")
         enriched = await self._enrich_findings(findings, hosts)
 
         js_config = {
@@ -196,6 +204,8 @@ class HtmlReporter:
         }
         execution_flags = {
             "force_exploit": bool(getattr(self.cfg, "force_exploit", False)),
+            "ai_triage_status": getattr(self.cfg, "ai_status_message", "AI triage disabled"),
+            "ai_triage_reason": getattr(self.cfg, "ai_disabled_reason", ""),
         }
 
         screenshots_render = [
@@ -212,7 +222,7 @@ class HtmlReporter:
         html_content = _render_html(
             target=target,
             scope=scope,
-            generated_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+            generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             findings=enriched,
             hosts=hosts,
             endpoints=endpoints,
@@ -340,13 +350,13 @@ class HtmlReporter:
         enriched: list[dict[str, Any]] = []
 
         for f in findings:
-            safe_title = _safe_text(f.title)
+            safe_title = _report_safe_text(f.title)
             if safe_title not in title_cache:
                 summary = await self._ai_summary(f)
                 title_cache[safe_title] = summary
 
             # Match host for status code info
-            safe_target_for_domain = _safe_text(f.target)
+            safe_target_for_domain = _report_safe_text(f.target)
             domain = safe_target_for_domain.split("//")[-1].split("/")[0].split(":")[0]
             matched_host = next((h for h in hosts if h.domain == domain), None)
             host_status = matched_host.status_code if matched_host else ""
@@ -361,12 +371,12 @@ class HtmlReporter:
             req_text = _read_text_safe(req_path) if req_path else ""
             res_text = _read_text_safe(res_path) if res_path else ""
 
-            safe_target = _safe_text(f.target)
-            safe_tool = _safe_text(f.tool)
-            safe_evidence = _safe_text(f.evidence)
-            safe_steps = _safe_text(f.reproducible_steps)
-            safe_raw = _safe_text(f.raw_output)
-            safe_timestamp = _safe_text(f.timestamp)
+            safe_target = _report_safe_text(f.target)
+            safe_tool = _report_safe_text(f.tool)
+            safe_evidence = _report_safe_text(f.evidence)
+            safe_steps = _report_safe_text(f.reproducible_steps)
+            safe_raw = _report_safe_text(f.raw_output)
+            safe_timestamp = _report_safe_text(f.timestamp)
 
             enriched.append({
                 "id":                 f.id,
@@ -402,10 +412,10 @@ class HtmlReporter:
             "Be concise — 1-3 sentences max per field. No jargon, no CVE numbers. "
             "Under 'impact', if the vulnerability is BOLA/IDOR, explicitly explain which specific ID (e.g., user_id=123) should be tested for manipulation based on the evidence."
         )
-        title = _safe_text(f.title)
-        tool = _safe_text(f.tool)
-        severity = _safe_text(f.severity)
-        evidence = _safe_text(f.evidence)
+        title = _report_safe_text(f.title)
+        tool = _report_safe_text(f.tool)
+        severity = _report_safe_text(f.severity)
+        evidence = _report_safe_text(f.evidence)
 
         prompt = f"""
 Finding title: {title}
@@ -420,6 +430,12 @@ Reply with a JSON object containing exactly these three keys:
   "remediation": "..."
 }}
 """
+        if not getattr(self.cfg, "ai_enabled", False) or self.ai is None:
+            return {
+                "what_is_it": f"A {f.severity}-severity vulnerability detected by {f.tool}.",
+                "impact": "AI triage disabled. Review the technical evidence for impact assessment.",
+                "remediation": "Review the evidence and reproducible steps below and apply appropriate fixes.",
+            }
         try:
             if hasattr(self.ai, "generate_content"):
                 # Gemini
@@ -446,13 +462,15 @@ Reply with a JSON object containing exactly these three keys:
             end   = raw.rfind("}") + 1
             if start >= 0 and end > start:
                 return json.loads(raw[start:end])
-        except Exception:
+        except Exception as exc:
+            if getattr(self.cfg, "ai_enabled", False):
+                self.cfg.disable_ai(f"{type(exc).__name__}: {exc}")
             pass
 
         # Graceful fallback
         return {
             "what_is_it": f"A {f.severity}-severity vulnerability detected by {f.tool}.",
-            "impact":      "This issue may be exploitable by an attacker to compromise the application.",
+            "impact":      "AI triage disabled. Review the technical evidence to confirm business impact.",
             "remediation": "Review the evidence and reproducible steps below and apply appropriate fixes.",
         }
 
@@ -569,6 +587,14 @@ def _render_html(
           <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
             <div class="text-xs text-gray-500">Force Exploit</div>
             <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("force_exploit", False)))}</div>
+          </div>
+          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <div class="text-xs text-gray-500">AI Triage</div>
+            <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("ai_triage_status", "AI triage disabled")))}</div>
+          </div>
+          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <div class="text-xs text-gray-500">AI Detail</div>
+            <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("ai_triage_reason", "") or "None"))}</div>
           </div>
         </div>
       </div>
@@ -715,7 +741,7 @@ def _render_html(
       </h2>
       <div class="bg-gray-900 rounded-xl border border-gray-800 p-4 max-h-64 overflow-y-auto">
         <ul class="space-y-1 font-mono text-xs text-gray-400">
-          {"".join(f'<li class="hover:text-emerald-400 transition-colors">{_e(ep.url)}</li>' for ep in endpoints[:100])}
+          {"".join(f'<li class="hover:text-emerald-400 transition-colors">{_e(_report_safe_text(ep.url))}</li>' for ep in endpoints[:100])}
           {"" if len(endpoints) <= 100 else f'<li class="text-gray-600 italic">… and {len(endpoints)-100} more</li>'}
         </ul>
       </div>

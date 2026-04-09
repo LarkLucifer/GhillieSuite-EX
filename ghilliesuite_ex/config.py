@@ -78,6 +78,9 @@ class Config:
     # ── Auto-detected provider + active key (populated post-init)
     ai_provider: str = field(init=False, default="none")
     active_api_key: str = field(init=False, default="")
+    ai_enabled: bool = field(init=False, default=False)
+    ai_status_message: str = field(init=False, default="AI triage disabled")
+    ai_disabled_reason: str = field(init=False, default="")
 
     # —— Optional fallback provider (used when primary refuses/blocks)
     ai_fallback_provider: str = field(
@@ -306,6 +309,22 @@ class Config:
     def __post_init__(self) -> None:
         """Run auto-detection immediately after the dataclass is initialised."""
         self.ai_provider, self.active_api_key = detect_ai_provider()
+        if self.ai_provider != "none" and self.active_api_key:
+            self.enable_ai()
+        else:
+            self.disable_ai("No AI provider API key configured.")
+
+    def enable_ai(self) -> None:
+        """Mark AI triage as available for this run."""
+        self.ai_enabled = True
+        self.ai_disabled_reason = ""
+        self.ai_status_message = "AI triage enabled"
+
+    def disable_ai(self, reason: str = "") -> None:
+        """Mark AI triage as unavailable and preserve the reason for reports."""
+        self.ai_enabled = False
+        self.ai_disabled_reason = (reason or "").strip()
+        self.ai_status_message = "AI triage disabled"
 
     @property
     def provider_display(self) -> str:

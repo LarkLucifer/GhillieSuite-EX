@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.rule import Rule
 
 from ghilliesuite_ex.state.models import Finding
+from ghilliesuite_ex.utils.redaction import redact_text
 from ghilliesuite_ex.utils.ui import SEVERITY_COLORS, findings_table
 
 from .base import AgentResult, AgentTask, BaseAgent
@@ -51,6 +52,10 @@ def _safe_text(value) -> str:
         return text
     except UnicodeEncodeError:
         return text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+
+
+def _report_safe_text(value) -> str:
+    return redact_text(_safe_text(value))
 
 
 def _extract_evidence_paths(text: str) -> tuple[str, str]:
@@ -97,17 +102,25 @@ class ReporterAgent(BaseAgent):
             output_dir = Path(self.cfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        now_utc = datetime.now(timezone.utc)
+        ts = now_utc.strftime("%Y%m%d_%H%M%S")
         safe_target = target.replace(".", "_").replace("/", "_").replace(":", "")
         base_name = f"{safe_target}_{ts}"
+        ai_status = getattr(self.cfg, "ai_status_message", "AI triage disabled")
+        ai_reason = getattr(self.cfg, "ai_disabled_reason", "")
 
         # ── JSON Report ────────────────────────────────────────────────────
         json_path = output_dir / f"{base_name}.json"
         report_data = {
             "target": target,
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": now_utc.isoformat(),
             "scope": self.scope,
             "scan_config": {
+                "ai_triage": {
+                    "enabled": bool(getattr(self.cfg, "ai_enabled", False) and self.ai is not None),
+                    "status": ai_status,
+                    "reason": ai_reason,
+                },
                 "js_deep_inspection": {
                     "js_max_workers": self.cfg.js_max_workers,
                     "js_max_files": self.cfg.js_max_files,
@@ -126,14 +139,14 @@ class ReporterAgent(BaseAgent):
             "findings": [
                 {
                     "id": f.id,
-                    "tool": _safe_text(f.tool),
-                    "target": _safe_text(f.target),
-                    "severity": _safe_text(f.severity),
-                    "title": _safe_text(f.title),
-                    "evidence": _safe_text(f.evidence),
-                    "reproducible_steps": _safe_text(f.reproducible_steps),
-                    "raw_output_excerpt": _safe_text(f.raw_output)[:500],
-                    "timestamp": _safe_text(f.timestamp),
+                    "tool": _report_safe_text(f.tool),
+                    "target": _report_safe_text(f.target),
+                    "severity": _report_safe_text(f.severity),
+                    "title": _report_safe_text(f.title),
+                    "evidence": _report_safe_text(f.evidence),
+                    "reproducible_steps": _report_safe_text(f.reproducible_steps),
+                    "raw_output_excerpt": _report_safe_text(f.raw_output)[:500],
+                    "timestamp": _report_safe_text(f.timestamp),
                     "evidence_request_path": _extract_evidence_paths(f.evidence)[0],
                     "evidence_response_path": _extract_evidence_paths(f.evidence)[1],
                 }
@@ -156,8 +169,9 @@ class ReporterAgent(BaseAgent):
             f"# GhillieSuite-EX Bug Bounty Report",
             f"",
             f"**Target:** `{target}`  ",
-            f"**Generated:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}  ",
+            f"**Generated:** {now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}  ",
             f"**Scope:** {', '.join(self.scope)}  ",
+            f"**AI Triage:** {ai_status}" + (f" ({ai_reason})" if ai_reason else "") + "  ",
             f"",
             f"---",
             f"",
@@ -209,14 +223,14 @@ class ReporterAgent(BaseAgent):
             ]
             for i, f in enumerate(bucket, start=1):
                 req_path, res_path = _extract_evidence_paths(f.evidence)
-                title = _safe_text(f.title)
-                tool = _safe_text(f.tool)
-                target_v = _safe_text(f.target)
-                severity_v = _safe_text(f.severity)
-                timestamp_v = _safe_text(f.timestamp)
-                evidence_v = _safe_text(f.evidence or "N/A")
-                steps_v = _safe_text(f.reproducible_steps or "N/A")
-                raw_v = _safe_text(f.raw_output)[:500] if f.raw_output else "N/A"
+                title = _report_safe_text(f.title)
+                tool = _report_safe_text(f.tool)
+                target_v = _report_safe_text(f.target)
+                severity_v = _report_safe_text(f.severity)
+                timestamp_v = _report_safe_text(f.timestamp)
+                evidence_v = _report_safe_text(f.evidence or "N/A")
+                steps_v = _report_safe_text(f.reproducible_steps or "N/A")
+                raw_v = _report_safe_text(f.raw_output)[:500] if f.raw_output else "N/A"
                 md_lines += [
                     f"### {i}. {title}",
                     f"",
@@ -258,29 +272,29 @@ class ReporterAgent(BaseAgent):
             for i, f in enumerate(stealth_findings, start=1):
                 req_path, res_path = _extract_evidence_paths(f.evidence)
                 md_lines += [
-                    f"### {i}. {f.title}",
+                    f"### {i}. {_report_safe_text(f.title)}",
                     f"",
                     f"| Field | Value |",
                     f"|-------|-------|",
-                    f"| **Tool** | `{f.tool}` |",
-                    f"| **Target** | `{f.target}` |",
-                    f"| **Severity** | **{f.severity.upper()}** |",
-                    f"| **Timestamp** | {f.timestamp} |",
+                    f"| **Tool** | `{_report_safe_text(f.tool)}` |",
+                    f"| **Target** | `{_report_safe_text(f.target)}` |",
+                    f"| **Severity** | **{_report_safe_text(f.severity).upper()}** |",
+                    f"| **Timestamp** | {_report_safe_text(f.timestamp)} |",
                     f"",
                     f"**Evidence:**",
                     f"```",
-                    f.evidence or "N/A",
+                    _report_safe_text(f.evidence or "N/A"),
                     f"```",
                     f"Evidence Request: `{req_path}`" if req_path else "",
                     f"Evidence Response: `{res_path}`" if res_path else "",
                     f"",
                     f"**Reproducible Steps:**",
                     f"",
-                    f.reproducible_steps or "N/A",
+                    _report_safe_text(f.reproducible_steps or "N/A"),
                     f"",
                     f"**Raw Output (excerpt):**",
                     f"```",
-                    f.raw_output[:500] if f.raw_output else "N/A",
+                    _report_safe_text(f.raw_output[:500] if f.raw_output else "N/A"),
                     f"```",
                     f"",
                     f"---",
