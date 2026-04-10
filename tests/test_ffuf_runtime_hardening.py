@@ -37,6 +37,7 @@ class TestFfufRuntimeHardening(unittest.TestCase):
 
     def test_ffuf_hardening_adds_rate_jitter_random_ua_and_auth_headers(self) -> None:
         cfg = Config()
+        cfg.waf_evasion = True
         cfg.auth_header = "Authorization: Bearer token123"
         agent = self._make_agent(cfg)
         cmd = ["ffuf", "-w", "wl.txt", "-u", "https://example.com/FUZZ", "-s"]
@@ -56,6 +57,7 @@ class TestFfufRuntimeHardening(unittest.TestCase):
 
     def test_user_supplied_user_agent_is_respected_without_random_override(self) -> None:
         cfg = Config()
+        cfg.waf_evasion = True
         cfg.auth_header = "User-Agent: CustomAgent/9.9"
         agent = self._make_agent(cfg)
         cmd = ["ffuf", "-w", "wl.txt", "-u", "https://example.com/FUZZ", "-s"]

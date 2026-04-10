@@ -250,9 +250,8 @@ def hunt(
         False,
         "--waf-evasion",
         help=(
-            "Enable the deterministic WAF Evasion & Payload Mutation Engine. "
-            "Generates vendor-tailored mutated payloads and verifies WAF bypasses. "
-            "Requires --force-auto or explicit HitL approval."
+            "Enable WAF-evasion runtime hardening for spoofed requests and "
+            "FFUF stealth controls (jitter + randomized User-Agent)."
         ),
         is_flag=True,
         rich_help_panel="Automation",
@@ -473,13 +472,8 @@ async def _async_hunt(
 
     if waf_evasion:
         console.print(
-            "[bold bright_yellow]WAF EVASION ENGINE ACTIVE[/bold bright_yellow]  "
-            "[dim]— deterministic payload mutations + vendor-tailored bypasses enabled[/dim]"
-        )
-        console.print(
-            f"[dim]  mutation_count={cfg.waf_mutation_count}, "
-            f"verify_timeout={cfg.waf_verify_timeout}s, "
-            f"max_retries={cfg.waf_max_retries}[/dim]"
+            "[bold bright_yellow]WAF EVASION HARDENING ACTIVE[/bold bright_yellow]  "
+            "[dim]— request spoofing + FFUF jitter/UA hardening enabled[/dim]"
         )
         console.print()
 
@@ -489,7 +483,7 @@ async def _async_hunt(
         )
     if cfg.execution_profile != "aggressive" and waf_evasion:
         console.print(
-            "[yellow]  waf-evasion requested, but deterministic mutation stages stay disabled outside the aggressive profile.[/yellow]"
+            "[dim]  waf-evasion hardening remains active across profiles (mutation probes removed).[/dim]"
         )
 
     if allow_redirects:

@@ -32,23 +32,6 @@ class _RecordingExploitAgent(ExploitAgent):
                     "reason": "test plan",
                 }
             ],
-            "payload_tests": [
-                {
-                    "url": "https://example.com/search?q=1",
-                    "vector": "sqli",
-                    "parameter": "q",
-                    "payload": "'",
-                }
-            ],
-            "mutated_payloads": [
-                {
-                    "url": "https://example.com/search?q=1",
-                    "vector": "sqli",
-                    "parameter": "q",
-                    "payload": "'/**/OR/**/1=1",
-                    "waf": "Unknown",
-                }
-            ],
         }
 
     def _normalize_plan_targets(self, plan, endpoints):
@@ -60,27 +43,6 @@ class _RecordingExploitAgent(ExploitAgent):
                 "confidence": 95,
             }
         }
-
-    def _normalize_payload_tests(self, plan, recon_urls):
-        return [
-            {
-                "url": "https://example.com/search?q=1",
-                "vector": "sqli",
-                "parameter": "q",
-                "payload": "'",
-            }
-        ]
-
-    def _normalize_mutated_payloads(self, plan, recon_urls):
-        return [
-            {
-                "url": "https://example.com/search?q=1",
-                "vector": "sqli",
-                "parameter": "q",
-                "payload": "'/**/OR/**/1=1",
-                "waf": "Unknown",
-            }
-        ]
 
     async def _run_sqlmap(self, *args, **kwargs):
         self.calls.append("sqlmap")
@@ -112,18 +74,6 @@ class _RecordingExploitAgent(ExploitAgent):
 
     async def _check_cloud_ssrf(self, *args, **kwargs):
         self.calls.append("cloud_ssrf")
-        return 1
-
-    async def _run_mutated_payloads(self, *args, **kwargs):
-        self.calls.append("mutated_payloads")
-        return 1
-
-    async def _run_payload_tests(self, *args, **kwargs):
-        self.calls.append("payload_tests")
-        return 1
-
-    async def _run_waf_evasion_stage(self, *args, **kwargs):
-        self.calls.append("waf_evasion")
         return 1
 
     async def _run_ffuf_stage(self, *args, **kwargs):
@@ -208,9 +158,6 @@ class TestExecutionProfiles(unittest.IsolatedAsyncioTestCase):
         self.assertIn("rsc", calls)
         self.assertIn("trufflehog", calls)
         self.assertNotIn("ffuf_ssrf", calls)
-        self.assertNotIn("payload_tests", calls)
-        self.assertNotIn("mutated_payloads", calls)
-        self.assertNotIn("waf_evasion", calls)
 
     async def test_aggressive_enables_broad_fuzzing_paths(self) -> None:
         _, calls = await self._run_agent("aggressive", waf_evasion=True, force_exploit=False)
@@ -220,7 +167,6 @@ class TestExecutionProfiles(unittest.IsolatedAsyncioTestCase):
         self.assertIn("nuclei", calls)
         self.assertIn("ffuf_dir", calls)
         self.assertIn("ffuf_ssrf", calls)
-        self.assertIn("waf_evasion", calls)
 
 
 class TestExecutionProfileValidation(unittest.TestCase):
