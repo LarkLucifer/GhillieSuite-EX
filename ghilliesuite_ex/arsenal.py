@@ -627,10 +627,6 @@ def build_command(
             )
         except Exception:
             pass
-        # Inject custom GhillieSuite templates alongside community templates
-        _custom_tpl_dir = Path(__file__).parent / "templates"
-        if _custom_tpl_dir.is_dir() and any(_custom_tpl_dir.glob("*.yaml")):
-            cmd.extend(["-t", str(_custom_tpl_dir)])
 
     if allow_redirects is None:
         try:
