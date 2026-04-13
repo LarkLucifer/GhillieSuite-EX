@@ -476,6 +476,85 @@ class TestExploitValidationAuthAware(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(findings[0].title.startswith("[INFO] "))
             self.assertIn("HTTP 403", findings[0].evidence)
 
+    async def test_validate_and_insert_finding_maps_graphql_recon_public_schema_to_informational_without_http_replay(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        finding = Finding(
+            tool="graphql_recon",
+            target="https://example.com/graphql",
+            severity="info",
+            title="[Public GraphQL API] Introspection Enabled — Read-Only/Public Schema",
+            evidence=(
+                "Endpoint: https://example.com/graphql\n"
+                "HTTP Status: 200\n"
+                "Exposed types: Query, Product, Healthcheck"
+            ),
+            reproducible_steps="1. POST the introspection query to the GraphQL endpoint.",
+            raw_output="{\"data\":{\"__schema\":{\"types\":[{\"name\":\"Query\"}]}}}",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _ForbiddenAsyncClient):
+                stored = await agent._validate_and_insert_finding(finding)
+
+            self.assertTrue(stored)
+            findings = await db.get_findings()
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "info")
+            self.assertTrue(findings[0].title.startswith("[INFO] "))
+            self.assertIn("[Tool-Specific Policy: Advisory]", findings[0].evidence)
+            self.assertIn("GraphQL introspection exposure preserved as advisory informational context", findings[0].evidence)
+
+    async def test_validate_and_insert_finding_maps_cloud_ssrf_surface_to_lead_without_http_replay(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        finding = Finding(
+            tool="cloud_ssrf",
+            target="https://example.com/fetch?url=http://169.254.169.254/latest/meta-data/",
+            severity="high",
+            title="Cloud SSRF Surface — Metadata Endpoint Not Blocked",
+            evidence=(
+                "SSRF-prone endpoint: https://example.com/fetch\n"
+                "Injected param 'url' with: http://169.254.169.254/latest/meta-data/\n"
+                "HTTP response: 200 (512 bytes)\n"
+                "Content snippet: upstream returned a generic success page"
+            ),
+            reproducible_steps="1. Replay the metadata probe and confirm with OOB telemetry.",
+            raw_output="upstream returned a generic success page",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _ForbiddenAsyncClient):
+                stored = await agent._validate_and_insert_finding(finding)
+
+            self.assertTrue(stored)
+            findings = await db.get_findings()
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "low")
+            self.assertTrue(findings[0].title.startswith("[LEAD] "))
+            self.assertIn("[Tool-Specific Policy: Advisory]", findings[0].evidence)
+            self.assertIn("Cloud SSRF surface signal preserved as a lead", findings[0].evidence)
+
 
 class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
     async def test_reports_redact_secrets_and_mark_ai_disabled(self) -> None:
