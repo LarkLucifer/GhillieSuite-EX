@@ -5,7 +5,7 @@ import unittest
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import httpx
@@ -554,6 +554,96 @@ class TestExploitValidationAuthAware(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(findings[0].title.startswith("[LEAD] "))
             self.assertIn("[Tool-Specific Policy: Advisory]", findings[0].evidence)
             self.assertIn("Cloud SSRF surface signal preserved as a lead", findings[0].evidence)
+
+    async def test_commander_logs_raw_and_status_on_json_decode_and_recovers_with_fallback(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        config.ai_fallback_provider = "ollama"
+        console_buffer = io.StringIO()
+        console = Console(file=console_buffer, force_terminal=False, color_system=None)
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            async def _fake_primary_ask(_self, _prompt, system=""):
+                return "<html>503 Service Unavailable</html>"
+
+            fallback_mock = AsyncMock(
+                return_value=(
+                    '{"stealth_mode": false, "targets": [], "global_notes": "fallback-plan-ok"}',
+                    200,
+                    "ollama",
+                )
+            )
+
+            with patch.object(BaseAgent, "_ask_ai", _fake_primary_ask), patch.object(
+                agent, "_ask_fallback_provider_with_meta", fallback_mock
+            ):
+                plan = await agent._build_execution_plan(
+                    ["https://example.com/search?q=1"],
+                    "example.com",
+                )
+
+            self.assertIn("fallback-plan-ok", plan.get("global_notes", ""))
+            self.assertEqual(plan.get("targets", []), [])
+            self.assertGreaterEqual(fallback_mock.await_count, 1)
+
+            log_text = console_buffer.getvalue()
+            self.assertIn("Commander parse failure", log_text)
+            self.assertIn("HTTP Status: unknown", log_text)
+            self.assertIn("Raw Response: <html>503 Service Unavailable</html>", log_text)
+            self.assertIn("fallback provider 'ollama'", log_text)
+
+    async def test_commander_logs_fallback_status_and_raw_when_fallback_returns_non_json(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        config.ai_fallback_provider = "ollama"
+        console_buffer = io.StringIO()
+        console = Console(file=console_buffer, force_terminal=False, color_system=None)
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            async def _fake_primary_ask(_self, _prompt, system=""):
+                return ""
+
+            fallback_mock = AsyncMock(
+                return_value=(
+                    "<html><title>503 Service Unavailable</title></html>",
+                    503,
+                    "ollama",
+                )
+            )
+
+            sleep_mock = AsyncMock(return_value=None)
+            with patch.object(BaseAgent, "_ask_ai", _fake_primary_ask), patch.object(
+                agent, "_ask_fallback_provider_with_meta", fallback_mock
+            ), patch("ghilliesuite_ex.agents.exploit.asyncio.sleep", sleep_mock):
+                plan = await agent._build_execution_plan(
+                    ["https://example.com/search?q=1"],
+                    "example.com",
+                )
+
+            self.assertEqual(plan.get("targets", []), [])
+            self.assertIn("Parse failure for chunk 1.", plan.get("global_notes", ""))
+            self.assertGreaterEqual(fallback_mock.await_count, 1)
+
+            log_text = console_buffer.getvalue()
+            self.assertIn("Commander parse failure", log_text)
+            self.assertIn("HTTP Status: 503", log_text)
+            self.assertIn("Raw Response: <html><title>503 Service Unavailable</title></html>", log_text)
 
 
 class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
