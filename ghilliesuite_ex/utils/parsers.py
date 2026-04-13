@@ -510,6 +510,7 @@ def parse_trufflehog(output: str, **kwargs) -> list[dict[str, Any]]:
                 "raw_value_redacted": redacted,
                 "source":             data.get("SourceMetadata", {}).get("Data", {}).get("Github", {}).get("repository", ""),
                 "url":                data.get("SourceMetadata", {}).get("Data", {}).get("Github", {}).get("link", ""),
+                "verified":           bool(data.get("Verified", data.get("verified", False))),
             })
         except json.JSONDecodeError:
             pass

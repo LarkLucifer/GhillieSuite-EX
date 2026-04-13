@@ -112,6 +112,11 @@ class _TimeoutAsyncClient(_RecordingAsyncClient):
         raise httpx.TimeoutException("validation timed out")
 
 
+class _ForbiddenAsyncClient:
+    def __init__(self, **kwargs):
+        raise AssertionError("HTTP replay should not be used for this tool policy")
+
+
 class TestRedaction(unittest.TestCase):
     def test_redact_sensitive_headers_and_tokens(self) -> None:
         raw = (
@@ -335,12 +340,12 @@ class TestExploitValidationAuthAware(unittest.IsolatedAsyncioTestCase):
         console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
 
         finding = Finding(
-            tool="ffuf",
+            tool="nuclei",
             target="https://example.com/admin",
             severity="medium",
-            title="Hidden Resource Found",
-            evidence="Resource returned a response during ffuf scan.",
-            reproducible_steps="1. Visit the hidden resource.",
+            title="Admin Surface Requires Review",
+            evidence="Probe returned a meaningful signal during validation.",
+            reproducible_steps="1. Replay the original request.",
             raw_output="",
         )
 
@@ -362,6 +367,114 @@ class TestExploitValidationAuthAware(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(findings[0].severity, "info")
             self.assertTrue(findings[0].title.startswith("[INFO] "))
             self.assertIn("timed out", findings[0].evidence.lower())
+
+    async def test_validate_and_insert_finding_bypasses_http_for_trufflehog(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        finding = Finding(
+            tool="trufflehog",
+            target="github:example",
+            severity="high",
+            title="Leaked Secret in GitHub Source - AWS Access Key",
+            evidence=(
+                "Organization: example\n"
+                "Source: example/repo\n"
+                "URL: https://github.com/example/repo/security\n"
+                "Verified: true\n"
+                "Value (redacted): AKIA[…REDACTED…]1234"
+            ),
+            reproducible_steps="1. Re-run trufflehog against the same org.",
+            raw_output="",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _ForbiddenAsyncClient):
+                stored = await agent._validate_and_insert_finding(finding)
+
+            self.assertTrue(stored)
+            findings = await db.get_findings()
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "high")
+            self.assertFalse(findings[0].title.startswith("[LEAD] "))
+            self.assertIn("Trufflehog marked the secret as verified", findings[0].evidence)
+
+    async def test_validate_and_insert_finding_maps_ffuf_200_to_lead_without_http_replay(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        finding = Finding(
+            tool="ffuf",
+            target="https://example.com/admin",
+            severity="medium",
+            title="Hidden Resource Found — HTTP 200",
+            evidence="URL: https://example.com/admin\nStatus: 200, Length: 512 bytes",
+            reproducible_steps="1. Visit: https://example.com/admin",
+            raw_output="",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _ForbiddenAsyncClient):
+                stored = await agent._validate_and_insert_finding(finding)
+
+            self.assertTrue(stored)
+            findings = await db.get_findings()
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "low")
+            self.assertTrue(findings[0].title.startswith("[LEAD] "))
+            self.assertIn("FFUF surface discovery preserved as a lead", findings[0].evidence)
+
+    async def test_validate_and_insert_finding_maps_ffuf_403_to_informational_without_http_replay(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        finding = Finding(
+            tool="ffuf",
+            target="https://example.com/internal",
+            severity="medium",
+            title="Hidden Resource Found — HTTP 403",
+            evidence="URL: https://example.com/internal\nStatus: 403, Length: 120 bytes",
+            reproducible_steps="1. Visit: https://example.com/internal",
+            raw_output="",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _ForbiddenAsyncClient):
+                stored = await agent._validate_and_insert_finding(finding)
+
+            self.assertTrue(stored)
+            findings = await db.get_findings()
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "info")
+            self.assertTrue(findings[0].title.startswith("[INFO] "))
+            self.assertIn("HTTP 403", findings[0].evidence)
 
 
 class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
