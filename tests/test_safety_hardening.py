@@ -47,8 +47,9 @@ class _AuthAwareExploitAgent(ExploitAgent):
 
 class _RecordingAsyncClient:
     last_init_kwargs = None
-    last_get_url = None
-    last_get_kwargs = None
+    last_request_method = None
+    last_request_url = None
+    last_request_kwargs = None
 
     def __init__(self, **kwargs):
         type(self).last_init_kwargs = kwargs
@@ -59,9 +60,10 @@ class _RecordingAsyncClient:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    async def get(self, url, **kwargs):
-        type(self).last_get_url = url
-        type(self).last_get_kwargs = kwargs
+    async def request(self, method, url, **kwargs):
+        type(self).last_request_method = method
+        type(self).last_request_url = url
+        type(self).last_request_kwargs = kwargs
         return SimpleNamespace(
             url=url,
             status_code=200,
@@ -70,11 +72,15 @@ class _RecordingAsyncClient:
             elapsed=SimpleNamespace(total_seconds=lambda: 0.12),
         )
 
+    async def get(self, url, **kwargs):
+        return await self.request("GET", url, **kwargs)
+
 
 class _WafBlockingAsyncClient(_RecordingAsyncClient):
-    async def get(self, url, **kwargs):
-        type(self).last_get_url = url
-        type(self).last_get_kwargs = kwargs
+    async def request(self, method, url, **kwargs):
+        type(self).last_request_method = method
+        type(self).last_request_url = url
+        type(self).last_request_kwargs = kwargs
         return SimpleNamespace(
             url=url,
             status_code=429,
@@ -85,9 +91,10 @@ class _WafBlockingAsyncClient(_RecordingAsyncClient):
 
 
 class _AuthFailureAsyncClient(_RecordingAsyncClient):
-    async def get(self, url, **kwargs):
-        type(self).last_get_url = url
-        type(self).last_get_kwargs = kwargs
+    async def request(self, method, url, **kwargs):
+        type(self).last_request_method = method
+        type(self).last_request_url = url
+        type(self).last_request_kwargs = kwargs
         return SimpleNamespace(
             url=url,
             status_code=401,
@@ -98,9 +105,10 @@ class _AuthFailureAsyncClient(_RecordingAsyncClient):
 
 
 class _TimeoutAsyncClient(_RecordingAsyncClient):
-    async def get(self, url, **kwargs):
-        type(self).last_get_url = url
-        type(self).last_get_kwargs = kwargs
+    async def request(self, method, url, **kwargs):
+        type(self).last_request_method = method
+        type(self).last_request_url = url
+        type(self).last_request_kwargs = kwargs
         raise httpx.TimeoutException("validation timed out")
 
 
@@ -181,8 +189,9 @@ class TestExploitValidationAuthAware(unittest.IsolatedAsyncioTestCase):
                 stored = await agent._validate_and_insert_finding(finding)
 
             self.assertTrue(stored)
-            self.assertEqual(_RecordingAsyncClient.last_get_url, finding.target)
-            self.assertEqual(_RecordingAsyncClient.last_get_kwargs, {})
+            self.assertEqual(_RecordingAsyncClient.last_request_method, "GET")
+            self.assertEqual(_RecordingAsyncClient.last_request_url, finding.target)
+            self.assertEqual(_RecordingAsyncClient.last_request_kwargs, {})
 
             init_kwargs = dict(_RecordingAsyncClient.last_init_kwargs or {})
             self.assertEqual(init_kwargs.get("proxy"), "http://127.0.0.1:8080")
@@ -197,6 +206,59 @@ class TestExploitValidationAuthAware(unittest.IsolatedAsyncioTestCase):
             findings = await db.get_findings()
             self.assertEqual(len(findings), 1)
             self.assertEqual(findings[0].target, finding.target)
+
+    async def test_validate_and_insert_finding_replays_post_json_request_context(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        config.auth_header = "Authorization: Bearer token123"
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        request_body = "{\"email\":\"alice@example.com\",\"role\":\"user\"}"
+        evidence_request = (
+            "POST https://example.com/api/users HTTP/1.1\r\n"
+            "Content-Type: application/json\r\n"
+            "X-Trace-Id: abc-123\r\n"
+            "\r\n"
+            f"{request_body}"
+        )
+        finding = Finding(
+            tool="nuclei",
+            target="https://example.com/api/users",
+            severity="medium",
+            title="User Creation Endpoint Exposed",
+            evidence="Scanner reached the JSON API.",
+            reproducible_steps="1. Replay the original POST request.",
+            raw_output="",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _RecordingAsyncClient):
+                stored = await agent._validate_and_insert_finding(
+                    finding,
+                    evidence_request=evidence_request,
+                )
+
+            self.assertTrue(stored)
+            self.assertEqual(_RecordingAsyncClient.last_request_method, "POST")
+            self.assertEqual(_RecordingAsyncClient.last_request_url, finding.target)
+            self.assertEqual(
+                dict(_RecordingAsyncClient.last_request_kwargs or {}).get("content"),
+                request_body,
+            )
+
+            init_kwargs = dict(_RecordingAsyncClient.last_init_kwargs or {})
+            headers = dict(init_kwargs.get("headers") or {})
+            self.assertEqual(headers.get("Content-Type"), "application/json")
+            self.assertEqual(headers.get("X-Trace-Id"), "abc-123")
+            self.assertEqual(headers.get("Authorization"), "Bearer token123")
 
     async def test_validate_and_insert_finding_preserves_waf_response_as_lead(self) -> None:
         config = Config()
