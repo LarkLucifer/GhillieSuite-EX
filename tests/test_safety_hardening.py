@@ -4,11 +4,14 @@ import shutil
 import unittest
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 
 from rich.console import Console
 
 from ghilliesuite_ex.agents.base import AgentResult, AgentTask, BaseAgent
+from ghilliesuite_ex.agents.exploit import ExploitAgent
 from ghilliesuite_ex.agents.recon import _probe_url
 from ghilliesuite_ex.agents.reporter import ReporterAgent
 from ghilliesuite_ex.config import Config
@@ -26,6 +29,45 @@ class _DummyAgent(BaseAgent):
 class _FailingAI:
     def generate_content(self, prompt: str):
         raise TimeoutError("simulated timeout")
+
+
+class _AuthAwareExploitAgent(ExploitAgent):
+    async def _ai_triage(self, finding, status_code, content_type, response_body):
+        return {
+            "is_vulnerable": True,
+            "is_lead": False,
+            "confidence": 95,
+            "technical_reasoning": "Replay validation preserved the original authenticated context.",
+        }
+
+    async def _generate_poc(self, finding, triage_reason):
+        return ""
+
+
+class _RecordingAsyncClient:
+    last_init_kwargs = None
+    last_get_url = None
+    last_get_kwargs = None
+
+    def __init__(self, **kwargs):
+        type(self).last_init_kwargs = kwargs
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def get(self, url, **kwargs):
+        type(self).last_get_url = url
+        type(self).last_get_kwargs = kwargs
+        return SimpleNamespace(
+            url=url,
+            status_code=200,
+            headers={"Content-Type": "text/html; charset=utf-8"},
+            text="<html>ok</html>",
+            elapsed=SimpleNamespace(total_seconds=lambda: 0.12),
+        )
 
 
 class TestRedaction(unittest.TestCase):
@@ -71,6 +113,56 @@ class TestAIFallback(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "")
         self.assertFalse(config.ai_enabled)
         self.assertIn("simulated timeout", config.ai_disabled_reason.lower())
+
+
+class TestExploitValidationAuthAware(unittest.IsolatedAsyncioTestCase):
+    async def test_validate_and_insert_finding_reuses_auth_headers_cookie_and_proxy(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        config.auth_cookie = "sessionid=abc123; csrftoken=xyz"
+        config.auth_header = "Authorization: Bearer token123"
+        config.proxy = "http://127.0.0.1:8080"
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        finding = Finding(
+            tool="nuclei",
+            target="https://example.com/dashboard",
+            severity="medium",
+            title="Sensitive Dashboard Exposure",
+            evidence="Dashboard returned to the scanner.",
+            reproducible_steps="1. Request the dashboard path.",
+            raw_output="",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _RecordingAsyncClient):
+                stored = await agent._validate_and_insert_finding(finding)
+
+            self.assertTrue(stored)
+            self.assertEqual(_RecordingAsyncClient.last_get_url, finding.target)
+            self.assertEqual(_RecordingAsyncClient.last_get_kwargs, {})
+
+            init_kwargs = dict(_RecordingAsyncClient.last_init_kwargs or {})
+            self.assertEqual(init_kwargs.get("proxy"), "http://127.0.0.1:8080")
+            self.assertEqual(init_kwargs.get("timeout"), 5.0)
+            self.assertTrue(init_kwargs.get("follow_redirects"))
+
+            headers = dict(init_kwargs.get("headers") or {})
+            self.assertEqual(headers.get("Authorization"), "Bearer token123")
+            self.assertEqual(headers.get("Cookie"), "sessionid=abc123; csrftoken=xyz")
+            self.assertIn("Mozilla/5.0", headers.get("User-Agent", ""))
+
+            findings = await db.get_findings()
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].target, finding.target)
 
 
 class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
