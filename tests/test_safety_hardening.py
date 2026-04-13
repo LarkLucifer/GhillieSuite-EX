@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
+import httpx
 from rich.console import Console
 
 from ghilliesuite_ex.agents.base import AgentResult, AgentTask, BaseAgent
@@ -68,6 +69,39 @@ class _RecordingAsyncClient:
             text="<html>ok</html>",
             elapsed=SimpleNamespace(total_seconds=lambda: 0.12),
         )
+
+
+class _WafBlockingAsyncClient(_RecordingAsyncClient):
+    async def get(self, url, **kwargs):
+        type(self).last_get_url = url
+        type(self).last_get_kwargs = kwargs
+        return SimpleNamespace(
+            url=url,
+            status_code=429,
+            headers={"Content-Type": "text/html; charset=utf-8", "Server": "cloudflare"},
+            text="<html><title>Attention Required</title> Just a moment...</html>",
+            elapsed=SimpleNamespace(total_seconds=lambda: 0.08),
+        )
+
+
+class _AuthFailureAsyncClient(_RecordingAsyncClient):
+    async def get(self, url, **kwargs):
+        type(self).last_get_url = url
+        type(self).last_get_kwargs = kwargs
+        return SimpleNamespace(
+            url=url,
+            status_code=401,
+            headers={"Content-Type": "text/html; charset=utf-8"},
+            text="<html>login required</html>",
+            elapsed=SimpleNamespace(total_seconds=lambda: 0.05),
+        )
+
+
+class _TimeoutAsyncClient(_RecordingAsyncClient):
+    async def get(self, url, **kwargs):
+        type(self).last_get_url = url
+        type(self).last_get_kwargs = kwargs
+        raise httpx.TimeoutException("validation timed out")
 
 
 class TestRedaction(unittest.TestCase):
@@ -163,6 +197,109 @@ class TestExploitValidationAuthAware(unittest.IsolatedAsyncioTestCase):
             findings = await db.get_findings()
             self.assertEqual(len(findings), 1)
             self.assertEqual(findings[0].target, finding.target)
+
+    async def test_validate_and_insert_finding_preserves_waf_response_as_lead(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        finding = Finding(
+            tool="dalfox",
+            target="https://example.com/search?q=test",
+            severity="medium",
+            title="Reflected XSS Candidate",
+            evidence="Payload reflected during scanning.",
+            reproducible_steps="1. Replay the reflected payload.",
+            raw_output="",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _WafBlockingAsyncClient):
+                stored = await agent._validate_and_insert_finding(finding)
+
+            self.assertTrue(stored)
+            findings = await db.get_findings()
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "low")
+            self.assertTrue(findings[0].title.startswith("[LEAD] "))
+            self.assertIn("denial/WAF response", findings[0].evidence)
+
+    async def test_validate_and_insert_finding_preserves_auth_failure_as_lead(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        config.auth_cookie = "sessionid=abc123"
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        finding = Finding(
+            tool="nuclei",
+            target="https://example.com/account",
+            severity="medium",
+            title="Sensitive Account Page Exposed",
+            evidence="Scanner reached the account page.",
+            reproducible_steps="1. Request the account page.",
+            raw_output="",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _AuthFailureAsyncClient):
+                stored = await agent._validate_and_insert_finding(finding)
+
+            self.assertTrue(stored)
+            findings = await db.get_findings()
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "low")
+            self.assertTrue(findings[0].title.startswith("[LEAD] "))
+            self.assertIn("HTTP 401", findings[0].evidence)
+
+    async def test_validate_and_insert_finding_preserves_timeout_as_informational(self) -> None:
+        config = Config()
+        config.disable_ai("No API key configured.")
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+
+        finding = Finding(
+            tool="ffuf",
+            target="https://example.com/admin",
+            severity="medium",
+            title="Hidden Resource Found",
+            evidence="Resource returned a response during ffuf scan.",
+            reproducible_steps="1. Visit the hidden resource.",
+            raw_output="",
+        )
+
+        async with StateDB(":memory:", target="example.com") as db:
+            agent = _AuthAwareExploitAgent(
+                db=db,
+                ai_client=None,
+                scope=["example.com"],
+                console=console,
+                config=config,
+            )
+
+            with patch("httpx.AsyncClient", _TimeoutAsyncClient):
+                stored = await agent._validate_and_insert_finding(finding)
+
+            self.assertTrue(stored)
+            findings = await db.get_findings()
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0].severity, "info")
+            self.assertTrue(findings[0].title.startswith("[INFO] "))
+            self.assertIn("timed out", findings[0].evidence.lower())
 
 
 class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
