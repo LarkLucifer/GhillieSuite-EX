@@ -495,7 +495,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
 
     "trufflehog": ToolSpec(
         binary="trufflehog",
-        base_cmd=["trufflehog", "github", "--org={target}", "--json"],
+        base_cmd=["trufflehog", "--no-update", "github", "--org={target}", "--json"],
         scope_flag=None,
         category="Cloud",
         parser="trufflehog",
