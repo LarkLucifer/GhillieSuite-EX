@@ -179,6 +179,27 @@ class Config:
         default_factory=lambda: float(os.getenv("JS_LLM_TIMEOUT", "8"))
     )
 
+    # ── Katana Crawler settings ────────────────────────────────────────────────
+    katana_max_targets: int = field(
+        default_factory=lambda: int(os.getenv("KATANA_MAX_TARGETS", "10"))
+    )
+    """Max concurrent Katana crawl targets. Default 10 (safe for home); set 25+ for VPS."""
+
+    katana_headless: bool = field(
+        default_factory=lambda: os.getenv("KATANA_HEADLESS", "0").strip() in ("1", "true", "yes", "on")
+    )
+    """Enable Katana headless (Chromium) mode for SPA/React/Vue targets. Requires playwright."""
+
+    katana_rate_limit: int = field(
+        default_factory=lambda: int(os.getenv("KATANA_RATE_LIMIT", "25"))
+    )
+    """Katana requests-per-second rate limit. Default 25 (safe for home router)."""
+
+    katana_depth: int = field(
+        default_factory=lambda: int(os.getenv("KATANA_DEPTH", "2"))
+    )
+    """Katana crawl depth. Default 2 (prevents infinite product/pagination loops)."""
+
     # ── SQLite state DB path
     # Hardcoded to a stable home-directory path so the DB is always found
     # regardless of CWD, enabling 100% reliable 4-day unattended runs.

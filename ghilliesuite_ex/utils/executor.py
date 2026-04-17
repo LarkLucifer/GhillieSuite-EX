@@ -15,6 +15,8 @@ Design decisions:
   • run_tool_to_file() runs binaries that write their output directly to disk
     (subfinder -o, httpx -json -o, ffuf -of json -o) for reliable inter-tool
     data handoff without brittle stdin piping.
+  • WAF Cooldown: sleep is performed OUTSIDE the lock so concurrent tools are
+    never blocked waiting on the lock itself.
 """
 
 from __future__ import annotations
@@ -74,15 +76,15 @@ async def run_tool(
     """
     global _last_waf_block_time
 
-    # Global Evasion Cooldown Check
+    # Global Evasion Cooldown Check — sleep OUTSIDE lock to avoid blocking other tools
+    wait_needed = 0.0
     async with _cooldown_lock:
         now = time.time()
         elapsed = now - _last_waf_block_time
         if elapsed < _EVASION_COOLDOWN_SECONDS:
-            wait_time = _EVASION_COOLDOWN_SECONDS - elapsed
-            # We don't print here to keep the executor clean, 
-            # but we ensure the delay happens.
-            await asyncio.sleep(wait_time)
+            wait_needed = _EVASION_COOLDOWN_SECONDS - elapsed
+    if wait_needed > 0:
+        await asyncio.sleep(wait_needed)
 
     stdin_pipe = asyncio.subprocess.PIPE if stdin_data else None
 
@@ -126,7 +128,7 @@ async def run_tool(
         if "403 forbidden" in combined or "429 too many requests" in combined:
             async with _cooldown_lock:
                 _last_waf_block_time = time.time()
-        
+
         return res
 
     except FileNotFoundError:
@@ -164,7 +166,8 @@ async def run_tool_to_file(
     Execute an external binary that writes its results directly to a file.
 
     This is the preferred execution method for recon tools that support an
-    output file flag (e.g. subfinder -o, httpx -json -o, ffuf -of json -o).
+    output file flag (e.g. subfinder -o, httpx -json -o, ffuf -of json -o,
+    katana -j -o).
     File-based I/O completely eliminates the brittle stdin-piping approach and
     ensures zero data loss regardless of stdout buffering behaviour.
 
@@ -185,13 +188,15 @@ async def run_tool_to_file(
     # Ensure parent directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Global Evasion Cooldown Check
+    # Global Evasion Cooldown Check — sleep OUTSIDE lock to avoid blocking other tools
+    wait_needed = 0.0
     async with _cooldown_lock:
         now = time.time()
         elapsed = now - _last_waf_block_time
         if elapsed < _EVASION_COOLDOWN_SECONDS:
-            wait_time = _EVASION_COOLDOWN_SECONDS - elapsed
-            await asyncio.sleep(wait_time)
+            wait_needed = _EVASION_COOLDOWN_SECONDS - elapsed
+    if wait_needed > 0:
+        await asyncio.sleep(wait_needed)
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -233,7 +238,7 @@ async def run_tool_to_file(
         if "403 forbidden" in combined or "429 too many requests" in combined:
             async with _cooldown_lock:
                 _last_waf_block_time = time.time()
-                
+
         return res
 
     except FileNotFoundError:

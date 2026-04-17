@@ -79,6 +79,7 @@ _STEALTH_ARGS: dict[str, list[str]] = {
     "ffuf":   ["-t", "1", "-p", "0.5"],
     "dirb":   ["-t", "1", "-p", "0.5"],
     "naabu":  ["-rate", "100", "-top-ports", "100"],
+    "katana": ["-rl", "5", "-delay", "1"],    # Low-and-slow crawl: 5 req/s + 1s between pages
 }
 
 # Extended stealth args applied when WAF evasion mode is enabled
@@ -118,8 +119,12 @@ def apply_stealth_args(tool_name: str, cmd: list[str], enabled: bool) -> list[st
             if tok in ("-rl", "-c", "-bs", "-timeout"):
                 skip_next = True
                 continue
-        elif tool_name in ("ffuf", "dirb", "katana"):
+        elif tool_name in ("ffuf", "dirb"):
             if tok in ("-t", "-p", "-c", "--concurrency"):
+                skip_next = True
+                continue
+        elif tool_name == "katana":
+            if tok in ("-rl", "-delay", "-c", "--concurrency"):
                 skip_next = True
                 continue
         
@@ -205,9 +210,23 @@ def _apply_nuclei_tuning(
     return cleaned
 
 
+def _replace_flag_value(cmd: list[str], flag: str, new_value: str) -> list[str]:
+    """Replace the value immediately following `flag` in cmd with `new_value`.
+    If the flag is not found, appends flag + new_value at the end."""
+    new_cmd = list(cmd)
+    for i, tok in enumerate(new_cmd):
+        if tok == flag and i + 1 < len(new_cmd):
+            new_cmd[i + 1] = new_value
+            return new_cmd
+    # Flag not present — append it
+    new_cmd.extend([flag, new_value])
+    return new_cmd
+
+
 @dataclass
 class ToolSpec:
     """Describes a single security tool available to the agent swarm."""
+
 
     binary: str
     """Executable name on PATH (e.g. 'subfinder', 'nuclei')."""
@@ -346,12 +365,15 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         base_cmd=[
             "katana", "-u", "{target}",
             "-silent",
-            "-d", "2",              # Reduced depth to 2 to prevent "menyusur" into endless product loops
-            "-jc",
+            "-d", "{katana_depth}",  # depth injected by build_command from cfg.katana_depth
+            "-jc",                    # parse inline JS
+            "-j",                     # JSONL output format (richer metadata: method, source, params)
+            "-o", "{output_file}",   # file-based output — eliminates stdout truncation
             "-ct", "5m",
+            "-rl", "{katana_rl}",    # rate limit injected from cfg.katana_rate_limit
             "-f", "qurl",
             "-ef",
-            "js,css,png,jpg,jpeg,svg,woff,woff2,ico,webp,gif,map,mp4,pdf,"
+            "css,png,jpg,jpeg,svg,woff,woff2,ico,webp,gif,map,mp4,pdf,"
             "bmp,tif,tiff,ttf,otf,eot,mp3,wav,ogg,webm,m4a,m4v,avi,mov,mkv,"
             "zip,rar,7z,tar,gz,tgz,bz2,iso,exe,dmg,apk",
             "-exclude-path", "product/,image/,images/,assets/,static/,media/,node_modules/,vendor/",
@@ -360,7 +382,12 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         category="Recon",
         parser="katana",
         hitl_required=False,
-        description="Fast web crawler — discovers endpoints, JS files, and form parameters.",
+        uses_output_file=True,  # switched to file-based JSONL output
+        description=(
+            "Fast web crawler — discovers endpoints, JS files, and form parameters. "
+            "JSONL output for reliable parsing. Configurable depth/rate via KATANA_DEPTH/KATANA_RATE_LIMIT. "
+            "Set KATANA_HEADLESS=1 for SPA/React/Vue targets (requires playwright)."
+        ),
     ),
 
     "gau": ToolSpec(
@@ -443,7 +470,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
     "dalfox": ToolSpec(
         binary="dalfox",
         base_cmd=[
-            "dalfox", "file", "{target}", 
+            "dalfox", "file", "{target}",
             "--silence", "--format", "json", "-o", "{output_file}", "-w", "50",
             # NOTE: --skip-mining-dom removed to enable DOM XSS detection (BB favorite)
             "--skip-bav", "--skip-mining-dict"
@@ -451,7 +478,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         scope_flag=None,
         category="Exploitation",
         parser="dalfox",
-        hitl_required=False,
+        hitl_required=True,  # FIXED: dalfox fires active XSS payloads — HitL required
         description="XSS scanner and exploitation tool — discovers reflected, stored, and DOM XSS (Bulk Mode). DOM mining enabled.",
     ),
 
@@ -466,7 +493,7 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         scope_flag="-u {target}",
         category="Exploitation",
         parser="sqlmap",
-        hitl_required=False,
+        hitl_required=True,  # FIXED: sqlmap writes to target DB — HitL required
         description="SQL injection 'Speedrun' mode: fast, smart, and multi-threaded.",
     ),
 
@@ -566,12 +593,25 @@ def build_command(
         else:
             wl_str = _BUNDLED_WORDLIST
 
+    # Resolve Katana config placeholders before building cmd
+    katana_depth_val = "2"
+    katana_rl_val = "25"
+    if tool_name == "katana":
+        try:
+            from ghilliesuite_ex.config import cfg as _cfg
+            katana_depth_val = str(max(1, int(getattr(_cfg, "katana_depth", 2))))
+            katana_rl_val = str(max(1, int(getattr(_cfg, "katana_rate_limit", 25))))
+        except Exception:
+            pass
+
     cmd = []
     for tok in spec.base_cmd:
-        tok = tok.replace("{target}",      target)
-        tok = tok.replace("{output_file}", out_str)
-        tok = tok.replace("{input_file}",  in_str)
-        tok = tok.replace("{wordlist}",    wl_str)
+        tok = tok.replace("{target}",       target)
+        tok = tok.replace("{output_file}",  out_str)
+        tok = tok.replace("{input_file}",   in_str)
+        tok = tok.replace("{wordlist}",     wl_str)
+        tok = tok.replace("{katana_depth}", katana_depth_val)
+        tok = tok.replace("{katana_rl}",    katana_rl_val)
         cmd.append(tok)
 
     # Centralized Auth Injection for ALL tools
@@ -625,6 +665,27 @@ def build_command(
                 getattr(_cfg, "nuclei_concurrency", None),
                 getattr(_cfg, "nuclei_http_timeout", None),
             )
+        except Exception:
+            pass
+
+    if tool_name == "katana":
+        try:
+            from ghilliesuite_ex.config import cfg as _cfg
+            # Turbo mode: scale up rate limit
+            if getattr(_cfg, "turbo_mode", False):
+                cmd = _replace_flag_value(cmd, "-rl", str(max(1, int(getattr(_cfg, "katana_rate_limit", 25)) * 4)))
+            # Headless mode: append -headless if enabled and playwright is available
+            if getattr(_cfg, "katana_headless", False) and "-headless" not in cmd:
+                import importlib.util
+                if importlib.util.find_spec("playwright") is not None:
+                    cmd.append("-headless")
+                else:
+                    import warnings
+                    warnings.warn(
+                        "KATANA_HEADLESS=1 set but playwright is not installed. "
+                        "Falling back to static crawl mode. Install with: pip install playwright && playwright install chromium",
+                        stacklevel=2,
+                    )
         except Exception:
             pass
 

@@ -488,7 +488,7 @@ class ReconAgent(BaseAgent):
                 f"Screenshots captured: {screenshots_added}",
             )
 
-        # Phase 5: katana (delta-only)
+        # Phase 5: katana (delta-only, concurrent)
         katana_urls_found = 0
         if task.tool_name and task.tool_name != "katana":
             self.console.print(f"[dim]  Supervisor specified {task.tool_name} - skipping katana.[/dim]")
@@ -504,37 +504,76 @@ class ReconAgent(BaseAgent):
                     katana_candidates.append(base)
             katana_candidates = list(dict.fromkeys(katana_candidates))
             katana_delta = [u for u in katana_candidates if u not in katana_history]
-            if katana_delta:
-                for url_target in katana_delta[:5]:
-                    self.console.print(f"[cyan]  Phase 5 - katana crawling {url_target}[/cyan]")
-                    katana_cmd = build_command("katana", url_target, auth_headers=auth_headers)
-                    with Status(f"[cyan]Crawling {url_target}...[/cyan]", console=self.console):
-                        katana_result = await run_tool(katana_cmd, timeout=timeout)
 
-                    if katana_result.ok:
-                        parsed_eps = get_parser("katana")(katana_result.stdout)
-                        domain = url_target.split("//")[-1].split("/")[0]
-                        host = host_by_domain.get(domain)
-                        for item in parsed_eps:
-                            if is_in_scope(item["url"], self.scope):
-                                ep = Endpoint(
-                                    url=item["url"],
-                                    params=item.get("params", ""),
-                                    source_tool="katana",
-                                    host_id=host.id if host else None,
-                                )
-                                await self.db.insert_endpoint(ep)
-                                items_added += 1
-                                katana_urls_found += 1
-                                new_endpoints.append(item["url"])
-                    else:
-                        self.console.print(f"[dim]katana: {katana_result.error[:80]}[/dim]")
-                katana_history.update(katana_delta)
+            if katana_delta:
+                # Determine max concurrent targets — turbo mode doubles the limit
+                try:
+                    from ghilliesuite_ex.config import cfg as _cfg
+                    _max_t = int(getattr(_cfg, "katana_max_targets", 10))
+                    if getattr(_cfg, "turbo_mode", False):
+                        _max_t = min(_max_t * 2, 50)
+                except Exception:
+                    _max_t = 10
+
+                targets_to_crawl = katana_delta[:_max_t]
+                self.console.print(
+                    f"[cyan]  Phase 5 - katana crawling {len(targets_to_crawl)} target(s) "
+                    f"concurrently (max={_max_t}, delta={len(katana_delta)})[/cyan]"
+                )
+
+                _sem = asyncio.Semaphore(_max_t)
+
+                async def _run_katana_single(url_target: str):
+                    """Crawl a single target with Katana using file-based JSONL output."""
+                    import hashlib
+                    _safe = hashlib.md5(url_target.encode()).hexdigest()[:8]
+                    _out_path = _TMP_DIR / f"katana_{_safe}.jsonl"
+                    async with _sem:
+                        _cmd = build_command(
+                            "katana", url_target,
+                            output_file=_out_path,
+                            auth_headers=auth_headers,
+                        )
+                        return url_target, await run_tool_to_file(_cmd, _out_path, timeout=timeout)
+
+                with Status("[cyan]Concurrent Katana crawl in progress...[/cyan]", console=self.console):
+                    crawl_tasks = [_run_katana_single(u) for u in targets_to_crawl]
+                    crawl_results = await asyncio.gather(*crawl_tasks, return_exceptions=True)
+
+                for item in crawl_results:
+                    if isinstance(item, Exception):
+                        self.console.print(f"[dim]katana: task error — {item}[/dim]")
+                        continue
+                    url_target, katana_result = item
+                    if katana_result.error:
+                        self.console.print(f"[dim]katana [{url_target[:40]}]: {katana_result.error[:80]}[/dim]")
+                        continue
+
+                    parsed_eps = get_parser("katana")(
+                        output="",
+                        output_path=katana_result.output_file,
+                    )
+                    domain = url_target.split("//")[-1].split("/")[0]
+                    host = host_by_domain.get(domain)
+                    for ep_item in parsed_eps:
+                        if is_in_scope(ep_item["url"], self.scope):
+                            ep = Endpoint(
+                                url=ep_item["url"],
+                                params=ep_item.get("params", ""),
+                                source_tool="katana",
+                                host_id=host.id if host else None,
+                            )
+                            await self.db.insert_endpoint(ep)
+                            items_added += 1
+                            katana_urls_found += 1
+                            new_endpoints.append(ep_item["url"])
+
+                katana_history.update(targets_to_crawl)
                 tool_result_panel(
                     self.console, "katana",
-                    build_command("katana", katana_delta[0]),
+                    build_command("katana", targets_to_crawl[0], output_file=_TMP_DIR / "katana_preview.jsonl"),
                     True,
-                    f"Crawled {katana_urls_found} high-value endpoint(s)",
+                    f"Crawled {len(targets_to_crawl)} targets → {katana_urls_found} high-value endpoint(s)",
                 )
             else:
                 self.console.print("[dim]katana: skipped (no new live URLs)[/dim]")

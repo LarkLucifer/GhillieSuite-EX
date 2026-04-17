@@ -88,7 +88,7 @@ def is_high_value_url(url: str) -> bool:
     NOTE: Also drops known CDNs using _CDN_BLACKLIST.
     """
     url_lower = url.lower()
-    
+
     # Drop known CDN/Third-party noise
     if any(cdn in url_lower for cdn in _CDN_BLACKLIST):
         return False
@@ -254,33 +254,72 @@ def parse_httpx(output: str = "", output_path: Path | None = None) -> list[dict[
     return results
 
 
-def parse_katana(output: str, **kwargs) -> list[dict[str, Any]]:
+def parse_katana(output: str = "", output_path: Path | None = None, **kwargs) -> list[dict[str, Any]]:
     """
-    Parse katana crawl output (one URL per line).
+    Parse katana crawl output — supports both JSONL file-based output (preferred)
+    and plain text line-delimited output (backwards compatibility).
+
+    With -j flag (JSONL mode), each line is a JSON object:
+      {"timestamp":"...", "request":{"method":"GET","endpoint":"..."}, "response":{"status": 200}}
 
     Smart filtering applied:
       - Static asset extensions are dropped entirely.
-      - Only high-value URLs (with params or API paths) are returned.
+      - Only high-value URLs (with params or API paths) are stored.
+      - JS files are always kept (for secret/sink analysis in ExploitAgent).
 
-    Returns: [{"url": str, "params": str}, ...]
+    Returns: [{"url": str, "params": str, "method": str, "status_code": int, "source": str}, ...]
     """
+    if output_path and output_path.exists():
+        try:
+            text = output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = output
+    else:
+        text = output
+
     seen: set[str] = set()
     results = []
-    for line in output.splitlines():
-        line = line.strip()
-        if not line or not line.startswith("http") or line in seen:
-            continue
-        seen.add(line)
 
-        # Filter out static assets
-        if has_static_extension(line):
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        url = ""
+        method = "GET"
+        status_code = 0
+        source = ""
+
+        # ── JSONL mode (katana -j) ─────────────────────────────────────────
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+                req = data.get("request", {})
+                resp = data.get("response", {})
+                url = req.get("endpoint", "") or data.get("url", "")
+                method = (req.get("method", "") or "GET").upper()
+                status_code = int(resp.get("status", 0) or 0)
+                source = data.get("source", "")
+            except (json.JSONDecodeError, TypeError, ValueError):
+                url = line if line.startswith("http") else ""
+
+        # ── Plain text mode (katana without -j) ───────────────────────────
+        elif line.startswith("http"):
+            url = line
+
+        if not url or url in seen:
+            continue
+        seen.add(url)
+
+        # Filter out static assets (but keep .js for ExploitAgent analysis)
+        if has_static_extension(url):
             continue
 
         # Only keep high-value URLs
-        if not is_high_value_url(line):
+        if not is_high_value_url(url):
             continue
 
-        param_match = re.search(r"\?([^#]+)", line)
+        param_match = re.search(r"\?([^#]+)", url)
         params = ""
         if param_match:
             params = ",".join(
@@ -288,7 +327,15 @@ def parse_katana(output: str, **kwargs) -> list[dict[str, Any]]:
                 for kv in param_match.group(1).split("&")
                 if kv
             )
-        results.append({"url": line, "params": params})
+
+        results.append({
+            "url":         url,
+            "params":      params,
+            "method":      method,
+            "status_code": status_code,
+            "source":      source,
+        })
+
     return results
 
 
@@ -430,7 +477,6 @@ def parse_sqlmap(output: str, **kwargs) -> list[dict[str, Any]]:
         results.append(current)
 
     return results
-
 
 
 def parse_ffuf(output: str = "", output_path: Path | None = None, **kwargs) -> list[dict[str, Any]]:
@@ -683,7 +729,7 @@ def parse_subzy(output: str = "", output_path: Path | None = None) -> list[dict[
     Parse subzy output (subdomain takeover checks).
     JSON lines expected with domain/status fields.
     Fallback: detect "VULNERABLE" lines.
-    Returns: [{"domain": str, "status": str, "vulnerable": bool}]
+    Returns: [{"domain": str, "status": str, "service": str, "vulnerable": bool}]
     """
     if output_path and output_path.exists():
         try:
@@ -703,9 +749,11 @@ def parse_subzy(output: str = "", output_path: Path | None = None) -> list[dict[
                 data = json.loads(line)
                 domain = data.get("domain") or data.get("host") or ""
                 status = data.get("status") or data.get("result") or ""
+                # FIXED: extract service field from JSON data (P2 fix)
+                service = data.get("service") or data.get("provider") or data.get("fingerprint") or ""
                 vuln = bool(data.get("vulnerable") or ("vulnerable" in status.lower()))
                 if domain:
-                    results.append({"domain": domain, "status": status, "vulnerable": vuln})
+                    results.append({"domain": domain, "status": status, "service": service, "vulnerable": vuln})
                 continue
             except json.JSONDecodeError:
                 pass
@@ -713,7 +761,7 @@ def parse_subzy(output: str = "", output_path: Path | None = None) -> list[dict[
         if "VULNERABLE" in upper:
             m = re.search(r"([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", line)
             if m:
-                results.append({"domain": m.group(1), "status": "VULNERABLE", "vulnerable": True})
+                results.append({"domain": m.group(1), "status": "VULNERABLE", "service": "", "vulnerable": True})
     return results
 
 
