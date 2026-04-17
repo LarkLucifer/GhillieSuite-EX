@@ -1,44 +1,41 @@
-# GhillieSuite-EX — Enterprise Bug Bounty Orchestrator
+# GhillieSuite-EX — AI-Orchestrated Bug Bounty Pipeline
 
-> **Professional, AI-automated penetration testing CLI for elite bug bounty hunters.**  
-> Multi-agent · Anti-WAF TLS Spoofing · Proxy Routing · Crash-Proof · Zero False Positives
+> A Python CLI that coordinates open-source security tools under an LLM-driven loop.  
+> Built for personal bug bounty use. **Not a commercial or enterprise product.**
 
 ---
 
-## 🌟 Enterprise Capabilities (2026 Upgrades)
+## What It Actually Does
 
-GhillieSuite-EX has evolved from a multi-tool wrapper into a **strict, evasion-focused enterprise orchestrator**:
+GhillieSuite-EX wraps a set of well-known Go/Python security tools (subfinder, katana, nuclei, dalfox, sqlmap, etc.) and ties them together with:
 
-- **AI Triage Master (Zero False Positives):** Upgraded LLM Evaluator acts as a ruthless Triage Master, catching WAF block pages, ignoring static assets (`.js`/`.css`), and verifying payload sanitization (HTML-encoding) before elevating XSS/SQLi findings.
-- **Global Proxy Routing & IP Evasion:** Every underlying tool (`httpx`, `sqlmap`, `nuclei`, `dalfox`, `katana`) and Python engine dynamically routes traffic through a centralized `--proxy` argument. Integrates seamlessly with Tor or ScraperAPI to prevent ISP blacklisting.
-- **TLS/JA3 Fingerprint Spoofing:** Standard `requests` replaced with `curl_cffi`. All internal API and engine requests flawlessly impersonate Google Chrome (`chrome120`) to bypass Cloudflare and Akamai bot-defense checks.
-- **Behavioral WAF Evasion Engine:** Implements batched processing (max 200 URLs), async LLM exponential backoffs, randomized Jitter delays (0.7s - 2.0s), and rotating User-Agents for robust, interrupt-free WAF mutation scanning.
-- **Global Evasion Cooldown (WAF Safe):** NEW: The pipeline now automatically detects HTTP 403 Forbidden and 429 Too Many Requests responses from ALL underlying tools. If a WAF block is detected, the hunt globally pauses for 60 seconds to cool down the IP and prevent permanent blacklisting—perfect for home connections (Parrot OS).
-- **Stealthy Tool Throttling:** Tools like Dalfox and Nuclei are dynamically throttled in `--stealth` mode (e.g. 5 threads for Dalfox) to maintain a human-like request profile.
-- **Targeted Tool Execution:** SQLMap and Arjun execute with surgical precision—SQLMap triggers *only* on parameterized URLs (`?id=`), and Arjun scans *only* unique base paths to preserve bandwidth and stealth.
-- **Profile-Driven Execution:** `--profile vdp-safe|balanced|aggressive` cleanly separates low-noise VDP workflows from broader exploit and fuzzing runs.
+1. **A Supervisor AI** — an LLM (OpenAI or Gemini) that decides which tool to run next based on what's been found so far.
+2. **A SQLite state database** — stores discovered hosts, endpoints, and findings across loops so work isn't repeated.
+3. **A ReconAgent** — runs the discovery pipeline sequentially and passes file-based output between tools.
+4. **An ExploitAgent** — runs vuln-scan and exploitation tools, with mandatory human confirmation (HitL) before any active exploit tool fires.
+5. **A ReporterAgent** — generates an HTML + JSON report from the state DB.
+
+The tool does **not** replace manual testing. It automates the boring reconnaissance and scanning phases so you can focus on logic bugs and report writing.
 
 ---
 
 ## Architecture
 
 ```
-SupervisorAgent (AI decision loop)
-├── ReconAgent       → subfinder → dnsx → naabu → httpx → katana → gau → arjun
-│                      (file-based handoffs; host:port aware probing)
-├── ExploitAgent     ? nuclei (cves/) ? nuclei ? dalfox [HitL] ? sqlmap [HitL]
-│                      ffuf [HitL] · BOLA/IDOR advisor · AI Prompt Injection advisor
-└── ReporterAgent    → HTML (Tailwind CSS) + JSON findings report
+SupervisorAgent  (LLM decision loop, max_loops iterations)
+├── ReconAgent   → subfinder → dnsx → naabu → httpx → katana → gau → arjun
+│                  All inter-tool handoffs via tmp/ files (no stdin piping)
+├── ExploitAgent → nuclei → dalfox [HitL] → sqlmap [HitL] → ffuf
+│                  + passive JS inspection, BOLA/GraphQL heuristics
+└── ReporterAgent → reports/<target>_<ts>.html + .json
 
-StateDB (SQLite via aiosqlite @ ~/GhillieSuite-EX/ghilliesuite_state.db)
-├── hosts      (domain, ip, status, tech_stack, tags)
-├── services   (host_id, port, proto, source_tool)
-├── endpoints  (url, params — high-value only)
-├── findings   (severity, title, reproducible_steps)
-└── cve_cache
+StateDB (SQLite @ ~/GhillieSuite-EX/ghilliesuite_state.db)
+├── hosts      (domain, ip, status_code, title, tech_stack)
+├── services   (host_id, port, proto)
+├── endpoints  (url, params, source_tool)
+├── findings   (severity, template_id, title, matched_url, evidence)
+└── screenshots (optional, requires --screenshots + gowitness)
 ```
-
-**Pipeline:** subfinder writes `tmp/subfinder_out.txt` → dnsx resolves → naabu scans ports → httpx probes host:port targets and writes `tmp/httpx_out.json` → katana/gau/arjun enrich endpoints. No stdin piping.
 
 ---
 
@@ -50,26 +47,28 @@ StateDB (SQLite via aiosqlite @ ~/GhillieSuite-EX/ghilliesuite_state.db)
 git clone <repo>
 cd GhillieSuite-EX
 python3 -m pip install -e .
-# Optional browser tooling only when you want Playwright-backed checks:
-# python3 -m pip install -e .[browser]
-# python3 -m playwright install chromium
+
+# Optional: Katana headless mode for SPA targets (React/Vue/Next.js)
+# python3 -m pip install playwright && playwright install chromium
 ```
 
 ### 2. Configure
 
 ```bash
 cp .env.example .env
-# Set GEMINI_API_KEY or OPENAI_API_KEY — provider is auto-detected by key prefix
+# Set GEMINI_API_KEY or OPENAI_API_KEY — provider auto-detected from key prefix
 ```
 
 ### 3. Install security tools
 
+All tools below must be on `$PATH`. Install only the ones you need.
+
 | Tool | Install |
-|------|---------| 
+|------|---------|
 | subfinder | `go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
 | dnsx | `go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest` |
 | naabu | `go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` |
-| httpx (optional) | `go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest` |
+| httpx | `go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest` |
 | katana | `go install github.com/projectdiscovery/katana/cmd/katana@latest` |
 | gau | `go install github.com/lc/gau/v2/cmd/gau@latest` |
 | arjun | `pip install arjun` |
@@ -77,27 +76,26 @@ cp .env.example .env
 | gowitness | `go install github.com/sensepost/gowitness@latest` |
 | nuclei | `go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
 | dalfox | `go install github.com/hahwul/dalfox/v2@latest` |
-| sqlmap | `python3 -m pip install sqlmap` |
+| sqlmap | `pip install sqlmap` |
 | trufflehog | `go install github.com/trufflesecurity/trufflehog/v3@latest` |
-| **ffuf** | `go install github.com/ffuf/ffuf/v2@latest` |
+| ffuf | `go install github.com/ffuf/ffuf/v2@latest` |
 
 ### 4. Verify
 
 ```bash
-GhillieSuite-EX.sec check-tools   # binary availability
-GhillieSuite-EX.sec check-config  # validates .env + shows detected AI provider
-python3 -m unittest discover -s tests -v  # baseline parser/DB regression tests
+GhillieSuite-EX.sec check-tools   # shows which binaries are on PATH
+GhillieSuite-EX.sec check-config  # validates .env + detected AI provider
 ```
 
 ### 5. Hunt
 
 ```bash
-# Standard (unauthenticated)
+# Unauthenticated
 GhillieSuite-EX.sec hunt \
   --target example.com \
   --scope scope_example.txt
 
-# Authenticated deep scan — injects session into ALL active tools (sqlmap, dalfox, nuclei, etc.)
+# Authenticated — session cookie injected into httpx, katana, nuclei, dalfox, sqlmap
 GhillieSuite-EX.sec hunt \
   --target app.example.com \
   --scope scope_example.txt \
@@ -112,210 +110,208 @@ GhillieSuite-EX.sec hunt \
 ```
 GhillieSuite-EX.sec hunt --target <domain> --scope <file|domains> [options]
 
-Options:
+Core:
   --target / -t         Primary domain to hunt                [required]
   --scope / -s          Scope: comma-sep domains or .txt file [required]
   --output / -o         Report output directory               [default: reports/]
   --evidence-dir        Evidence output directory             [default: evidence/]
   --max-loops           Max agent decision loops              [default: 15]
-  --timeout             Per-tool timeout (seconds)            [default: 180]
-  --nuclei-timeout      Nuclei-only subprocess timeout (sec)
-  --nuclei-http-timeout Nuclei per-request timeout (sec)
-  --rate-limit          Nuclei requests per second
-  --concurrency         Nuclei parallel template checks
-  --fast-nuclei         Aggressive Nuclei speed + severity filters
-  --waf-evasion         Enable strict WAF fingerprinting & mutation [flag]
-  --safe-mode           HitL on ALL tools                     [flag]
-  --force-auto          Bypass ALL HitL prompts (CI/CD mode)  [flag]
-  --force-exploit       Bypass AI filtering for exploit tools [flag]
-  --stealth             Enable rate limiting for WAF evasion  [flag]
-  --disable-stealth     Ignore WAF/Commander stealth signals  [flag]
-  --allow-redirects     httpx follows redirects during recon  [flag]
-  --no-update-templates Skip nuclei -ut on startup            [flag]
-  --cookie / --cookies / -c  Session cookie string (authenticated scanning)
-  --header              Custom HTTP header (e.g. Authorization: Bearer ...)
-  --proxy / -p          Global HTTP/SOCKS5 proxy (e.g. socks5://127.0.0.1:9050)
-  --screenshots         Enable gowitness screenshots (optional)
+  --timeout             Per-tool subprocess timeout (seconds) [default: 180]
 
-GhillieSuite-EX.sec check-tools   Show binary availability
-GhillieSuite-EX.sec check-config  Validate .env + show detected AI provider
+Nuclei tuning:
+  --nuclei-timeout      Nuclei subprocess timeout (seconds)
+  --nuclei-http-timeout Nuclei per-request timeout (seconds)
+  --nuclei-rate-limit   Requests per second                   [default: 20]
+  --nuclei-concurrency  Parallel template checks              [default: 10]
+
+Execution control:
+  --profile             vdp-safe | balanced | aggressive      [default: balanced]
+  --stealth             Apply conservative rate limiting to all tools
+  --disable-stealth     Ignore stealth signals (for lab testing)
+  --force-auto          Bypass all HitL prompts (CI/CD / pre-authorised)
+  --force-exploit       Skip AI filtering for exploit phase
+  --safe-mode           Require HitL for every tool, including nuclei
+  --allow-redirects     httpx follows HTTP redirects during recon
+
+Auth & proxy:
+  --cookie / --cookies  Session cookie string
+  --header              Custom HTTP header (e.g. Authorization: Bearer ...)
+  --proxy / -p          Global proxy for Python requests (http/socks5)
+
+Optional:
+  --screenshots         Enable gowitness screenshot capture
+  --no-update-templates Skip nuclei -ut on startup
+
+GhillieSuite-EX.sec check-tools   Show binary availability by profile
+GhillieSuite-EX.sec check-config  Validate .env + show AI provider
 GhillieSuite-EX.sec version       Show version
 ```
 
----
-
-## How-to Guide: Massive Cookies in the Terminal
-
-Large session cookies (Cloudflare, CSRF-heavy apps, SSO, etc.) often contain characters
-that shells treat as special. Use the patterns below to avoid broken requests.
-
-**Terminal Escaping (Bash/Linux)**
-Always wrap complex cookies in single quotes so Bash does not split on spaces/semicolons
-or expand `$`/`!`/`&`/`?` characters:
-
-```bash
-GhillieSuite-EX.sec hunt \
-  --target app.example.com \
-  --scope scope_example.txt \
-  --cookies 'session=abc123; cf_bm=...; __Host-csrf=...; other=...'
-```
-
-If the cookie itself contains a single quote, close/open the quotes around it:
-
-```bash
---cookies 'session=abc123; tricky=it'\''s-here; other=...'
-```
-
-**PowerShell Variables (Windows)**
-PowerShell is happiest when you assign the cookie to a variable first, then pass it:
-
-```powershell
-$cookie = "session=abc123; cf_bm=...; __Host-csrf=...; other=..."
-GhillieSuite-EX.sec hunt --target app.example.com --scope scope_example.txt --cookies $cookie
-```
-
-If your cookie contains `$`, either escape it with a backtick (`` `$ ``) or use single
-quotes in the assignment:
-
-```powershell
-$cookie = 'session=abc123; token=$VALUE; other=...'
-```
-
-**Token Rotation & Rate Limits**
-Rolling session tokens (e.g., `CF-BM`, `CSRF`, short-lived SSO) can invalidate quickly
-when you send too many requests. Reduce the scan velocity to keep sessions stable:
-
-```bash
-GhillieSuite-EX.sec hunt \
-  --target app.example.com \
-  --scope scope_example.txt \
-  --cookies 'session=abc123; cf_bm=...; __Host-csrf=...' \
-  --rate-limit 3
-```
-
-Practical range: `--rate-limit 3` to `7` for brittle sessions. If you still see
-auth drop-offs or 429s, lower it further or refresh the cookie.
-
-**Cookie Troubleshooting (Quick Fixes)**
-If your authenticated scan fails after the first few requests, these are the
-most common causes:
-
-- **401/403 after initial success:** The session token rolled. Re-capture the
-  cookie and drop `--rate-limit` to slow churn.
-- **Immediate redirect to login (302/401):** The cookie was truncated. Make
-  sure you copied the full `Cookie` header and wrapped it correctly for your shell.
-- **Cloudflare interstitials / JS challenge pages:** Tokens are short-lived.
-  Refresh the cookie right before running and keep rate limits low.
-- **Weird parse errors or missing endpoints:** Hidden newlines from copy/paste.
-  Re-copy the cookie from DevTools in a single line.
-
-**DevTools Copy-Paste Helper (Chrome/Edge/Firefox)**
-Use one of these fast paths to grab a clean cookie string:
-
-1. **Network tab (most reliable):** Open DevTools → Network → select an authenticated
-   request → Request Headers → `Cookie` → copy the full value.
-2. **Application/Storage tab:** DevTools → Application (Chrome/Edge) or Storage (Firefox)
-   → Cookies → select the site → right-click the table → “Copy” → “Copy all.”
-
-Then paste it straight into your command:
-
-```bash
-GhillieSuite-EX.sec hunt \
-  --target app.example.com \
-  --scope scope_example.txt \
-  --cookies 'PASTE_COOKIE_VALUE_HERE'
-```
+> **Note on `--proxy`:** The proxy flag is forwarded to Python's internal `httpx` calls and injected as `-proxy`/`--proxy` arguments into nuclei, katana, sqlmap, and dalfox subprocesses. It does **not** intercept traffic from tools that do not support a proxy flag natively.
 
 ---
 
-## Attack Vectors (2026 Edition)
+## What Each Phase Does
 
-| Vector | Tool | HitL |
-|--------|------|------|
-| Subdomain enumeration | subfinder | — |
-| DNS resolution | dnsx | — |
-| Port discovery | naabu | — |
-| Historical URL discovery | gau | — |
-| Live host probing (JSON) | httpx (WAF-Bypass flags) | — |
-| Web crawling (authenticated) | katana | — |
-| Parameter discovery | arjun | — |
-| Subdomain takeover checks | subzy | — |
-| Visual recon (screenshots) | gowitness | Optional |
-| CVE / misconfiguration scan | nuclei (Targeted tags) | Critical only |
-| **CVE Hunter (pre-fuzz)** | **nuclei (cves/ templates)** | Critical only |
-| XSS exploitation | dalfox | ✅ Always |
-| SQL injection | sqlmap | ✅ Always |
-| **Directory brute-force** | **ffuf (Context-Aware)** | Balanced / Aggressive |
-| **SSRF parameter fuzzing** | **ffuf** | Aggressive only |
-| **Cloud Metadata SSRF** | **Active Param Fuzzing** | Balanced / Aggressive |
-| **Cache Poisoning** | **Unkeyed Header Probe** | — |
-| **BOLA / IDOR detection** | Active Differential Analysis | Balanced / Aggressive |
-| **React 19 RSC Parsing** | Active Leak Discovery | Balanced / Aggressive |
-| **Prototype Pollution** | Passive JS sink inspection | — |
-| **AI/LLM Prompt Injection** | Passive advisor | — |
-| Secret scanning | trufflehog / JS regex | Balanced / Aggressive |
+### ReconAgent (always runs)
 
-### False Positive Suppression & HTTP Validation
-All discovered findings pass through an `httpx` validation layer. 404 endpoints are downgraded to `info` (`[Historical/Inactive]`), and pages returning 200 OK with "Access Denied" or "Login Required" text in the body are flagged as `[False Positive / Fake 200]` to save triage time.
+| Step | Tool | What it does |
+|------|------|--------------|
+| 1 | subfinder | Passive subdomain enumeration from crt.sh, VirusTotal, etc. |
+| 2 | dnsx | DNS resolution — filters dead subdomains |
+| 3 | naabu | Top-1000 port scan on live hosts |
+| 4 | httpx | HTTP probe — status, title, tech stack detection. WAF-friendly flags (`-random-agent`, `-rl 15`) |
+| 5 | katana | Web crawl — JSONL output, configurable depth. Concurrent targets via `asyncio.gather()` |
+| 6 | gau | Historical URL lookup (Wayback Machine, CommonCrawl, URLScan) |
+| 7 | arjun | Parameter discovery on high-value endpoints only |
+| Optional | subzy | Subdomain takeover fingerprint checks |
+| Optional | gowitness | Screenshot capture |
 
-### Context-Aware Orchestration (TechStackDetector)
-`ffuf` is dynamically injected with smart wordlists based on the detected tech stack (`PHP/Laravel`, `Java/Spring`, `Node.js`), drastically optimizing the directory brute-force phase.
+URL filtering: static assets (images, fonts, CSS, source maps) are dropped before storage. Only parameterised URLs and high-value paths (`/api/`, `/admin`, `/auth`, etc.) are kept.
 
-### Execution Profiles
-- `--profile vdp-safe`: low-noise advisory workflow only. No brute forcing, no broad fuzzing, and no aggressive exploit stages.
-- `--profile balanced`: targeted exploitation plus advisory checks. `ffuf` directory brute force is allowed here, but broad fuzzing stays constrained.
-- `--profile aggressive`: full arsenal mode. Enables broader fuzzing paths, including `ffuf` SSRF fuzzing and WAF-evasion mutation stages.
+### ExploitAgent
 
-### Current Implementation Notes
-- Prototype Pollution is currently a passive JS sink inspection stage.
-- Secret scanning is currently provided by JS secret inspection plus `trufflehog` in `balanced` and `aggressive` profiles.
+| Stage | Tool / Method | Notes |
+|-------|---------------|-------|
+| Vuln scan | nuclei | Severity: `medium,high,critical`. Tags: cve, sqli, xss, lfi, ssrf, rce, ssti, xxe, auth-bypass, misconfig, takeover, and more. `tech`/`disclosure` tags excluded as low-signal. |
+| XSS | dalfox | Active exploitation — **always requires HitL** unless `--force-auto` |
+| SQLi | sqlmap | Active exploitation — **always requires HitL** unless `--force-auto` |
+| Directory fuzzing | ffuf | Runs in `balanced` and `aggressive` profiles with context-aware wordlists (PHP/Laravel, Java/Spring, Node.js) |
+| JS inspection | regex | Scans crawled `.js` files for secret patterns (AWS keys, bearer tokens, GitHub tokens, etc.) and DOM-XSS sinks (`innerHTML`, `eval`, etc.) |
+| Prototype pollution | regex | Passive scan of JS files for `__proto__` / `constructor.prototype` patterns. Generates an advisory finding, not a confirmed vulnerability. |
+| GraphQL | introspection | Sends `__schema` query to detected `/graphql` endpoints. Reports exposed schema as informational. |
+| BOLA/IDOR | httpx differential | Detects integer/UUID path segments and re-requests `id±1`. A significant response size change triggers a high-severity advisory. **This is a heuristic, not a confirmed finding.** |
+| Info leak (React/Next.js) | HTTP probe | Sends `RSC: 1` header to applicable paths and checks for unexpected JSON payloads. Passive advisory only. |
+| AI/LLM targets | advisory | When httpx detects AI-related tech in page title or stack, stores a prompt-injection advisory with example payloads. No automated exploitation. |
+| Secret scanning | trufflehog | Scans GitHub org repositories. Runs in `balanced`/`aggressive` profiles only. |
 
-### Deep Research & Execution (Tier 0-9 Attacks)
-- **4-Stage Crash-Proof Pipeline**: The `ExploitAgent` strictly executes Recon → VulnScan → Contextual Exploitation → Advanced Logic. Every stage is wrapped in a global exception handler, guaranteeing a 100% stable 4-day unattended run.
-- **Enterprise WAF & IP Resilience**: Integrating `curl_cffi` for perfect Google Chrome TLS/JA3 impersonation, alongside rotating User-Agents and Jitter delays. The built-in **WAF Evasion Engine** (`--waf-evasion`) fingerprints over 30 WAF vendors and mutates payloads intelligently. A global `--proxy` argument cascades to all subprocesses (sqlmap, nuclei, dalfox) to prevent ISP blacklisting and allow endless IP rotation.
-- **Cloud Metadata SSRF**: SSRF-prone endpoints are dynamically injected with AWS/GCP/Azure payloads (e.g., `169.254.169.254/latest/meta-data`). Responses are flagged if they contain cloud credentials or IAM profiles.
-- **Cache Poisoning**: Unkeyed headers (`X-Forwarded-Host`, `X-Host`) are sent with canary hostnames to verify reflection and edge cache pollution vulnerabilities.
-- **Prototype Pollution**: JS assets are inspected for high-signal prototype pollution sinks and reported as passive leads for manual verification.
-- **React 19 / Next.js Flight**: Inspects `.json` paths and passes custom `RSC: 1` headers to intercept React Server Component leaks to decode hardcoded developer secrets and insecure prop drilling payloads.
+### ReporterAgent
 
-### BOLA/IDOR Detection (Differential Analysis)
-The ExploitAgent scans endpoints for integer (`/user/123`) and UUID segments. When an integer ID is found, it performs active **Differential Analysis** using `httpx` to fuzz `id+1` and `id-1`. If the HTTP response length changes significantly, the finding is automatically elevated to a **CRITICAL** status with a glowing red **VERIFIED** HTML badge.
+Generates two files in `reports/`:
+- `<target>_<timestamp>.html` — HTML report with findings table, evidence excerpts, severity badges
+- `<target>_<timestamp>.json` — machine-readable findings, hosts, endpoints
 
-### Smart Looping & Anti-Redundancy
-- **AgentSwarm Pivot**: Tools are tracked globally for zero-finding returns. Three consecutive failures on specific endpoints result in an immediate pivot to a completely new attack vector, preventing infinite dead-end probing.
-- **Recon Synergy**: `subfinder` execution is aborted for root domains natively crawled by `katana` within the same cycle.
+---
 
-### AI / LLM Prompt Injection
-When httpx detects an AI/chatbot tech stack (`ChatGPT`, `LangChain`, `Copilot`, `llm`, etc.), the host is tagged and a **high** severity advisory is stored with 8 curated prompt injection payloads (direct/indirect/template).
+## Execution Profiles
+
+| Profile | Active tools | Use case |
+|---------|-------------|---------|
+| `vdp-safe` | recon only (nuclei/dalfox/sqlmap/ffuf/trufflehog disabled) | Responsible disclosure programs with strict rules |
+| `balanced` | recon + nuclei + dalfox + sqlmap + ffuf (directory) | Standard bug bounty — default |
+| `aggressive` | all tools + broader ffuf coverage | VPS / pre-authorised targets |
+
+---
+
+## WAF / Rate-Limiting Behaviour
+
+- **WAF cooldown:** If any tool's stdout/stderr contains a 403 Forbidden or 429 Too Many Requests string, the global executor pauses for 60 seconds before the next tool runs. This is a simple string-match heuristic, not deep traffic analysis.
+- **`--stealth` mode:** Applies conservative overrides to nuclei (`-rl 15 -c 5`), sqlmap (`--delay=1 --threads=1`), ffuf (`-t 1`), and katana (`-rl 5 -delay 1`). Config values from `.env` always take final precedence over stealth overrides.
+- **`--stealth` does not:** Rotate IPs, use Tor automatically, or spoof TLS fingerprints for subprocess tools.
+
+---
+
+## Nuclei Configuration
+
+All nuclei flags are driven from config — nothing is hardcoded in the tool registry:
+
+```bash
+# .env overrides
+NUCLEI_SEVERITY=medium,high,critical   # default (strips info/low BB noise)
+NUCLEI_RATE_LIMIT=20                   # req/s
+NUCLEI_CONCURRENCY=10                  # parallel templates
+NUCLEI_HTTP_TIMEOUT=5                  # per-request timeout
+NUCLEI_TAGS=cve,sqli,xss,...           # see config.py for full default list
+
+# Profile overrides (applied automatically)
+# vdp-safe  → severity: high,critical
+# balanced  → severity: medium,high,critical (honours NUCLEI_SEVERITY)
+# aggressive → severity: medium,high,critical (honours NUCLEI_SEVERITY)
+```
+
+---
+
+## Katana Configuration
+
+```bash
+KATANA_MAX_TARGETS=10    # concurrent crawl targets (raise to 25+ on VPS)
+KATANA_RATE_LIMIT=25     # req/s per target
+KATANA_DEPTH=2           # crawl depth
+KATANA_HEADLESS=0        # set to 1 for SPA/React targets (requires playwright)
+```
+
+Katana uses `asyncio.gather()` to crawl up to `KATANA_MAX_TARGETS` hosts concurrently, with each target writing to its own JSONL file to prevent output conflicts.
+
+---
+
+## Authenticated Scanning
+
+`--cookie` and `--header` values are injected into:
+- `httpx` via `-H`
+- `katana` via `-H`  
+- `nuclei` via `-H`
+- `dalfox` via `-C` (cookie) / `-H` (header)
+- `sqlmap` via `--cookie=`
+
+Credentials are **never written to disk or `.env`**.
+
+---
+
+## Session Cookie Handling
+
+Large cookie strings often contain shell-special characters. Pass them safely:
+
+**Bash/Linux — use single quotes:**
+```bash
+GhillieSuite-EX.sec hunt \
+  --target app.example.com \
+  --scope scope.txt \
+  --cookies 'session=abc123; cf_bm=...; __Host-csrf=...'
+```
+
+**PowerShell — assign to variable first:**
+```powershell
+$cookie = "session=abc123; cf_bm=...; __Host-csrf=..."
+GhillieSuite-EX.sec hunt --target app.example.com --scope scope.txt --cookies $cookie
+```
+
+For short-lived tokens (Cloudflare, SSO), keep `--nuclei-rate-limit 3` to reduce session churn.
 
 ---
 
 ## Smart URL Filtering
 
-`parse_katana()` and `parse_gau()` drop static assets and store **only**:
+`parse_katana()` and `parse_gau()` silently drop static assets and store only:
 - URLs with query parameters (`?key=val`)
-- High-value paths: `/api/`, `/admin`, `/auth`, `/login`, `/graphql`, `/user`, `/account`, etc.
+- High-value paths: `/api/`, `/admin`, `/auth`, `/login`, `/graphql`, `/user`, `/account`, `/upload`, `/webhook`, etc.
+- `.js` files (kept for secret + sink inspection)
 
-This preserves LLM token budget for real attack surface analysis.
+This avoids filling the state DB with image URLs and font requests.
 
 ---
 
-## AI Provider (Auto-Detected)
+## AI Provider
 
-No `AI_PROVIDER` env var needed. Set **one** key:
+Set exactly one key — provider is auto-detected from the key prefix:
 
-| Key prefix | Provider | Model |
+| Key prefix | Provider | Model used |
 |---|---|---|
 | `sk-...` | OpenAI | gpt-4o-mini |
 | `AIza...` | Google Gemini | gemini-2.5-pro |
 
-If both are set, **OpenAI takes priority**.
+If both keys are set, OpenAI takes priority. The AI is used for:
+- Supervisor planning (which agent / tool to run next)
+- ExploitAgent pre-scan analysis (which URLs are worth targeting)
+- Finding triage summaries in the report
+
+AI is **not** required for the basic pipeline to run — if no key is set, the Supervisor falls back to a deterministic sequence.
 
 ---
 
 ## Extending the Tool Registry
 
 1. **`arsenal.py`** — add a `ToolSpec` to `TOOL_REGISTRY`:
+
 ```python
 "mytool": ToolSpec(
     binary="mytool",
@@ -323,26 +319,26 @@ If both are set, **OpenAI takes priority**.
     scope_flag="--target {target}",
     category="Recon",        # Recon | VulnScan | Exploitation | Cloud
     parser="mytool",
-    hitl_required=False,     # True if it sends active payloads
-    description="One-line description for the AI supervisor.",
+    hitl_required=False,     # set True for anything that sends active payloads
+    description="One-line description the Supervisor AI uses to decide when to run this.",
 ),
 ```
 
-2. **`utils/parsers.py`** — add `parse_mytool(output: str) -> list[dict]`.
+2. **`utils/parsers.py`** — add `parse_mytool(output: str, **kwargs) -> list[dict]`.
 
-3. Done — the Supervisor AI auto-discovers it via the description string.
+3. Register in `get_parser()` dict. Done — the Supervisor discovers it automatically.
 
-**File I/O tools:** set `uses_output_file=True` and include `-o {output_file}` in `base_cmd`. Call `run_tool_to_file()` from the agent and pass `output_path`. The parser receives `output_path: Path`.
+**File I/O tools:** set `uses_output_file=True` and include `-o {output_file}` in `base_cmd`. Call `run_tool_to_file()` and pass `output_path=`. The parser receives `output_path: Path`.
 
 ---
 
 ## Safety & Ethics
 
-- **Scope is mandatory.** `--scope` is required and enforced at every layer — out-of-scope URLs are silently dropped.
-- **HitL by default for all active exploits.** `dalfox`, `sqlmap`, and `ffuf` SSRF testing always require `[Y/n]` human confirmation before firing. This can be completely bypassed by using the `--force-auto` CLI flag for headless CI/CD execution.
-- **Passive and Active validation.** AI capabilities actively validate target endpoints natively using Python's `httpx` library, ensuring noise and false positives are aggressively reduced.
-- **Auth credentials are session-only.** `--cookie` / `--header` values are never written to disk or `.env`.
-- **You are responsible** for HackerOne program compliance and legal authorization.
+- **Scope is mandatory.** `--scope` is required. Out-of-scope URLs are dropped at every layer.
+- **HitL for active exploits.** `dalfox` and `sqlmap` always prompt `[Y/n]` before running. Bypass with `--force-auto` only on pre-authorised targets.
+- **No automatic IP rotation.** The tool does not manage proxies, Tor circuits, or VPN switching.
+- **Findings need manual verification.** BOLA diffs, prototype pollution hits, and AI advisory findings are heuristics — treat them as leads, not confirmed vulnerabilities.
+- **You are responsible** for program compliance and legal authorisation before running any scan.
 
 ---
 
@@ -350,10 +346,10 @@ If both are set, **OpenAI takes priority**.
 
 Saved to `reports/` after each hunt:
 
-- `<target>_<timestamp>.html` ? polished, automated Tailwind CSS dashboard with AI-generated plain-English translations. Features **Visual Evidence** (embedded screenshots when `--screenshots` is enabled), request/response evidence excerpts, and **Dynamic Severity** (auto-promotion of BOLA/GraphQL hits to `CRITICAL` with a glowing red `VERIFIED` badge).
-- `<target>_<timestamp>.json` ? machine-readable, all findings, hosts, endpoints.
+- `<target>_<timestamp>.html` — HTML report: findings table with severity badges, evidence excerpts, host list, endpoint count, and screenshots if `--screenshots` was enabled.
+- `<target>_<timestamp>.json` — all findings, hosts, and endpoints as JSON.
 
-Evidence files (request/response captures) are saved to `evidence/` by default or the directory specified by `--evidence-dir`.
+Evidence files (request/response captures) are saved to `evidence/` or the path set by `--evidence-dir`.
 
 ---
 
