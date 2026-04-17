@@ -158,6 +158,30 @@ class Config:
     nuclei_http_timeout: int = field(
         default_factory=lambda: int(os.getenv("NUCLEI_HTTP_TIMEOUT", "5"))
     )
+    nuclei_severity: str = field(
+        default_factory=lambda: os.getenv(
+            "NUCLEI_SEVERITY", "medium,high,critical"
+        ).strip()
+    )
+    """
+    Comma-separated severity filter for Nuclei.
+    Bug bounty default: 'medium,high,critical' — drops info/low noise.
+    Override per-run: NUCLEI_SEVERITY=low,medium,high,critical
+    """
+    nuclei_tags: str = field(
+        default_factory=lambda: os.getenv(
+            "NUCLEI_TAGS",
+            "cve,sqli,xss,lfi,ssrf,rce,ssti,xxe,idor,cors,redirect,"
+            "auth-bypass,default-login,token,crlf,header-injection,"
+            "file-upload,panel,login,misconfig,takeover,graphql,"
+            "unauth,open-redirect,backup,config,debug,injection",
+        ).strip()
+    )
+    """
+    Comma-separated Nuclei tags. Focused on high-signal bug bounty findings.
+    Deliberately excludes 'tech' and 'disclosure' — pure noise in BB context.
+    Override per-run: NUCLEI_TAGS=cve,sqli,xss,rce
+    """
 
     # â”€â”€ JS Deep Inspection limits
     js_max_workers: int = field(

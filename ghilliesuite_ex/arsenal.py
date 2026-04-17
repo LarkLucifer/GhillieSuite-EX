@@ -185,27 +185,48 @@ def _apply_nuclei_tuning(
     rate_limit: int | None,
     concurrency: int | None,
     http_timeout: int | None,
+    severity: str | None = None,
+    tags: str | None = None,
 ) -> list[str]:
-    """Override nuclei performance flags with configured values."""
+    """
+    Strip-then-inject Nuclei performance AND filter flags.
+
+    By rebuilding these flags from config rather than the base_cmd,
+    we guarantee that config.py / env vars ALWAYS win — no silent
+    conflicts from previously hardcoded values.
+
+    Strips: -rl, -c, -timeout, -severity, -tags (and their = variants).
+    Then injects each provided value in the correct order.
+    """
+    # Flags that each consume the next token
+    _pair_flags = {"-rl", "-c", "-timeout", "-severity", "-tags", "-bs"}
+    # Flags also expressible as -flag=value
+    _prefix_flags = ("-rl=", "-c=", "-timeout=", "-severity=", "-tags=", "-bs=")
+
     cleaned: list[str] = []
     skip_next = False
     for tok in cmd:
         if skip_next:
             skip_next = False
             continue
-        if tok in ("-rl", "-c", "-timeout"):
+        if tok in _pair_flags:
             skip_next = True
             continue
-        if tok.startswith(("-rl=", "-c=", "-timeout=")):
+        if tok.startswith(_prefix_flags):
             continue
         cleaned.append(tok)
 
+    # Inject in a sensible order: timeout → rate → concurrency → severity → tags
     if http_timeout is not None:
         cleaned.extend(["-timeout", str(max(1, int(http_timeout)))])
     if rate_limit is not None:
         cleaned.extend(["-rl", str(max(1, int(rate_limit)))])
     if concurrency is not None:
         cleaned.extend(["-c", str(max(1, int(concurrency)))])
+    if severity:
+        cleaned.extend(["-severity", severity.strip()])
+    if tags:
+        cleaned.extend(["-tags", tags.strip()])
 
     return cleaned
 
@@ -442,27 +463,22 @@ TOOL_REGISTRY: dict[str, ToolSpec] = {
         binary="nuclei",
         base_cmd=[
             "nuclei", "-u", "{target}",
-            # Comprehensive bug-bounty tag set — covers OWASP Top 10 + BB favorites
-            "-tags", (
-                "cve,ssrf,lfi,misconfig,exposure,graphql,"
-                "takeover,rce,injection,xss,cors,redirect,"
-                "default-login,token,auth-bypass,crlf,"
-                "header-injection,file-upload,panel,login,"
-                "tech,disclosure,backup,config,debug,"
-                "unauth,idor,sqli,ssti,xxe,open-redirect"
-            ),
-            "-severity", "low,medium,high,critical",
-            "-timeout", "5",  # fail fast on tarpits
-            # WARNING: Do not increase rate limit above 5 req/s to prevent home router crash and ISP ban
-            "-rl", "5",       # rate-limit to 5 req/s — safe for home networks
-            "-c", "5",        # concurrency: 5 parallel template checks
+            # NOTE: -severity, -tags, -rl, -c, -timeout are NOT hardcoded here.
+            # They are injected at runtime by _apply_nuclei_tuning() from config/env.
+            # This guarantees that NUCLEI_SEVERITY, NUCLEI_TAGS, NUCLEI_RATE_LIMIT
+            # and NUCLEI_CONCURRENCY always take effect without conflicts.
             "-silent", "-j",
         ],
         scope_flag="-u {target}",
         category="VulnScan",
         parser="nuclei",
         hitl_required=False,  # HitL only for critical findings — handled in ExploitAgent
-        description="Template-based vulnerability scanner; comprehensive tags for CVE/XSS/SSRF/LFI/RCE/takeover/misconfig/auth-bypass. Rate-limited to 5 req/s for stealth.",
+        description=(
+            "Template-based vulnerability scanner. "
+            "Tags: cve,sqli,xss,lfi,ssrf,rce,ssti,xxe + more high-signal BB tags. "
+            "Severity: medium,high,critical (info/low dropped as BB noise). "
+            "Rate/concurrency driven fully from config: NUCLEI_RATE_LIMIT / NUCLEI_CONCURRENCY."
+        ),
     ),
 
     # ── Active Exploitation (HitL required) ───────────────────────────────────
@@ -656,17 +672,7 @@ def build_command(
     except Exception:
         pass
 
-    if tool_name == "nuclei":
-        try:
-            from ghilliesuite_ex.config import cfg as _cfg
-            cmd = _apply_nuclei_tuning(
-                cmd,
-                getattr(_cfg, "nuclei_rate_limit", None),
-                getattr(_cfg, "nuclei_concurrency", None),
-                getattr(_cfg, "nuclei_http_timeout", None),
-            )
-        except Exception:
-            pass
+
 
     if tool_name == "katana":
         try:
@@ -717,7 +723,39 @@ def build_command(
     except Exception:
         pass
 
+    # ── Nuclei FINAL PASS: config always wins (runs after stealth/turbo) ──────
+    # Re-running _apply_nuclei_tuning here ensures that any rate/concurrency/
+    # severity/tags injected by stealth or turbo are stripped and replaced with
+    # the authoritative config values. This is the single source of truth.
+    if tool_name == "nuclei":
+        try:
+            from ghilliesuite_ex.config import cfg as _cfg
+            _sev = getattr(_cfg, "nuclei_severity", "medium,high,critical")
+            _profile = getattr(_cfg, "execution_profile", "balanced")
+            if _profile == "vdp-safe":
+                _sev = "high,critical"
+            # aggressive: honours NUCLEI_SEVERITY env (already resolved above)
+
+            _tags = getattr(
+                _cfg, "nuclei_tags",
+                "cve,sqli,xss,lfi,ssrf,rce,ssti,xxe,idor,cors,redirect,"
+                "auth-bypass,default-login,token,crlf,header-injection,"
+                "file-upload,panel,login,misconfig,takeover,graphql,"
+                "unauth,open-redirect,backup,config,debug,injection"
+            )
+            cmd = _apply_nuclei_tuning(
+                cmd,
+                rate_limit=getattr(_cfg, "nuclei_rate_limit", None),
+                concurrency=getattr(_cfg, "nuclei_concurrency", None),
+                http_timeout=getattr(_cfg, "nuclei_http_timeout", None),
+                severity=_sev,
+                tags=_tags,
+            )
+        except Exception:
+            pass
+
     return cmd
+
 
 
 def _write_temp_wordlist(name: str, payload_list: list[str]) -> str:
