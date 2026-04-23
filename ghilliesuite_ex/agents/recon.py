@@ -110,8 +110,10 @@ class ReconAgent(BaseAgent):
 
         auth_headers = self.cfg.auth_headers_flags  # [] if no auth configured
         _TMP_DIR.mkdir(parents=True, exist_ok=True)
+        recon_run_count = int(getattr(self, "_recon_run_count", 0)) + 1
         httpx_history: set[str] = getattr(self, "_httpx_history", set())
         katana_history: set[str] = getattr(self, "_katana_history", set())
+        katana_last_crawl_run: dict[str, int] = getattr(self, "_katana_last_crawl_run", {})
         gau_history: set[str] = getattr(self, "_gau_history", set())
         arjun_history: set[str] = getattr(self, "_arjun_history", set())
 
@@ -282,7 +284,19 @@ class ReconAgent(BaseAgent):
                 if base:
                     katana_candidates.append(base)
             katana_candidates = list(dict.fromkeys(katana_candidates))
-            katana_delta = [u for u in katana_candidates if u not in katana_history]
+            try:
+                recrawl_interval = max(1, int(getattr(self.cfg, "katana_recrawl_interval", 3)))
+            except Exception:
+                recrawl_interval = 3
+
+            katana_delta: list[str] = []
+            for url_target in katana_candidates:
+                if url_target not in katana_history:
+                    katana_delta.append(url_target)
+                    continue
+                last_run = int(katana_last_crawl_run.get(url_target, 0) or 0)
+                if (recon_run_count - last_run) >= recrawl_interval:
+                    katana_delta.append(url_target)
 
             if katana_delta:
                 # Determine max concurrent targets - turbo mode doubles the limit
@@ -319,6 +333,11 @@ class ReconAgent(BaseAgent):
                     crawl_tasks = [_run_katana_single(u) for u in targets_to_crawl]
                     crawl_results = await asyncio.gather(*crawl_tasks, return_exceptions=True)
 
+                try:
+                    max_eps_per_target = max(1, int(getattr(self.cfg, "katana_max_endpoints_per_target", 4000)))
+                except Exception:
+                    max_eps_per_target = 4000
+
                 for item in crawl_results:
                     if isinstance(item, Exception):
                         self.console.print(f"[dim]katana: task error - {item}[/dim]")
@@ -334,20 +353,38 @@ class ReconAgent(BaseAgent):
                     )
                     domain = url_target.split("//")[-1].split("/")[0]
                     host = host_by_domain.get(domain)
+                    inserted_for_target = 0
+                    seen_target_urls: set[str] = set()
                     for ep_item in parsed_eps:
-                        if is_in_scope(ep_item["url"], self.scope):
-                            ep = Endpoint(
-                                url=ep_item["url"],
-                                params=ep_item.get("params", ""),
-                                source_tool="katana",
-                                host_id=host.id if host else None,
-                            )
-                            await self.db.insert_endpoint(ep)
-                            items_added += 1
-                            katana_urls_found += 1
-                            new_endpoints.append(ep_item["url"])
+                        ep_url = str(ep_item.get("url") or "")
+                        if not ep_url or ep_url in seen_target_urls:
+                            continue
+                        if not is_in_scope(ep_url, self.scope):
+                            continue
+                        if inserted_for_target >= max_eps_per_target:
+                            break
+
+                        seen_target_urls.add(ep_url)
+                        ep = Endpoint(
+                            url=ep_url,
+                            params=ep_item.get("params", ""),
+                            source_tool="katana",
+                            host_id=host.id if host else None,
+                        )
+                        await self.db.insert_endpoint(ep)
+                        items_added += 1
+                        katana_urls_found += 1
+                        inserted_for_target += 1
+                        new_endpoints.append(ep_url)
+
+                    if inserted_for_target >= max_eps_per_target:
+                        self.console.print(
+                            f"[dim]katana [{url_target[:40]}]: endpoint cap reached ({max_eps_per_target})[/dim]"
+                        )
 
                 katana_history.update(targets_to_crawl)
+                for crawled_target in targets_to_crawl:
+                    katana_last_crawl_run[crawled_target] = recon_run_count
                 tool_result_panel(
                     self.console, "katana",
                     build_command("katana", targets_to_crawl[0], output_file=_TMP_DIR / "katana_preview.jsonl"),
@@ -473,6 +510,8 @@ class ReconAgent(BaseAgent):
 
         setattr(self, "_httpx_history", httpx_history)
         setattr(self, "_katana_history", katana_history)
+        setattr(self, "_katana_last_crawl_run", katana_last_crawl_run)
+        setattr(self, "_recon_run_count", recon_run_count)
         setattr(self, "_gau_history", gau_history)
         setattr(self, "_arjun_history", arjun_history)
 

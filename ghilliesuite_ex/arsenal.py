@@ -610,13 +610,13 @@ def build_command(
             wl_str = _BUNDLED_WORDLIST
 
     # Resolve Katana config placeholders before building cmd
-    katana_depth_val = "2"
-    katana_rl_val = "25"
+    katana_depth_val = "6"
+    katana_rl_val = "30"
     if tool_name == "katana":
         try:
             from ghilliesuite_ex.config import cfg as _cfg
-            katana_depth_val = str(max(1, int(getattr(_cfg, "katana_depth", 2))))
-            katana_rl_val = str(max(1, int(getattr(_cfg, "katana_rate_limit", 25))))
+            katana_depth_val = str(max(1, int(getattr(_cfg, "katana_depth", 6))))
+            katana_rl_val = str(max(1, int(getattr(_cfg, "katana_rate_limit", 30))))
         except Exception:
             pass
 
@@ -679,7 +679,7 @@ def build_command(
             from ghilliesuite_ex.config import cfg as _cfg
             # Turbo mode: scale up rate limit
             if getattr(_cfg, "turbo_mode", False):
-                cmd = _replace_flag_value(cmd, "-rl", str(max(1, int(getattr(_cfg, "katana_rate_limit", 25)) * 4)))
+                cmd = _replace_flag_value(cmd, "-rl", str(max(1, int(getattr(_cfg, "katana_rate_limit", 30)) * 4)))
             # Headless mode: append -headless if enabled and playwright is available
             if getattr(_cfg, "katana_headless", False) and "-headless" not in cmd:
                 import importlib.util

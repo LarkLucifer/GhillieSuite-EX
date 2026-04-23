@@ -205,9 +205,9 @@ class Config:
 
     # ── Katana Crawler settings ────────────────────────────────────────────────
     katana_max_targets: int = field(
-        default_factory=lambda: int(os.getenv("KATANA_MAX_TARGETS", "10"))
+        default_factory=lambda: int(os.getenv("KATANA_MAX_TARGETS", "20"))
     )
-    """Max concurrent Katana crawl targets. Default 10 (safe for home); set 25+ for VPS."""
+    """Max concurrent Katana crawl targets. Default 20 for deep-wide recon."""
 
     katana_headless: bool = field(
         default_factory=lambda: os.getenv("KATANA_HEADLESS", "0").strip() in ("1", "true", "yes", "on")
@@ -215,14 +215,24 @@ class Config:
     """Enable Katana headless (Chromium) mode for SPA/React/Vue targets. Requires playwright."""
 
     katana_rate_limit: int = field(
-        default_factory=lambda: int(os.getenv("KATANA_RATE_LIMIT", "25"))
+        default_factory=lambda: int(os.getenv("KATANA_RATE_LIMIT", "30"))
     )
-    """Katana requests-per-second rate limit. Default 25 (safe for home router)."""
+    """Katana requests-per-second rate limit. Default 30 for balanced deep crawling."""
 
     katana_depth: int = field(
-        default_factory=lambda: int(os.getenv("KATANA_DEPTH", "2"))
+        default_factory=lambda: int(os.getenv("KATANA_DEPTH", "6"))
     )
-    """Katana crawl depth. Default 2 (prevents infinite product/pagination loops)."""
+    """Katana crawl depth. Default 6 for deep endpoint discovery."""
+
+    katana_recrawl_interval: int = field(
+        default_factory=lambda: int(os.getenv("KATANA_RECRAWL_INTERVAL", "3"))
+    )
+    """Recrawl previously-seen Katana targets every N Recon runs. Default 3."""
+
+    katana_max_endpoints_per_target: int = field(
+        default_factory=lambda: int(os.getenv("KATANA_MAX_ENDPOINTS_PER_TARGET", "4000"))
+    )
+    """Maximum in-scope endpoints inserted from one Katana target crawl."""
 
     # ── SQLite state DB path
     # Hardcoded to a stable home-directory path so the DB is always found
