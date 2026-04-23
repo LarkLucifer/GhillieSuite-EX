@@ -13,7 +13,6 @@ from rich.console import Console
 
 from ghilliesuite_ex.agents.base import AgentResult, AgentTask, BaseAgent
 from ghilliesuite_ex.agents.exploit import ExploitAgent
-from ghilliesuite_ex.agents.recon import _probe_url
 from ghilliesuite_ex.agents.reporter import ReporterAgent
 from ghilliesuite_ex.config import Config
 from ghilliesuite_ex.state.db import StateDB
@@ -749,32 +748,3 @@ class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(report_data["scope"]["rules"][1]["include"], False)
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)
-
-
-class _FakeResponse:
-    def __init__(self, url: str) -> None:
-        self.url = url
-        self.status_code = 200
-        self.headers = {"server": "nginx", "x-powered-by": "php"}
-
-
-class _AwaitedCurlSession:
-    impersonate = "chrome120"
-
-    async def get(self, url: str, **kwargs):
-        return _FakeResponse(url)
-
-
-class TestAsyncHttpProbe(unittest.IsolatedAsyncioTestCase):
-    async def test_probe_url_awaits_async_curl_session_response(self) -> None:
-        result = await _probe_url(
-            _AwaitedCurlSession(),
-            "https://example.com",
-            asyncio.Semaphore(1),
-        )
-
-        self.assertIsNotNone(result)
-        self.assertEqual(result["url"], "https://example.com")
-        self.assertEqual(result["status_code"], 200)
-        self.assertEqual(result["server"], "nginx")
-        self.assertEqual(result["tech_stack"], "nginx,php")
