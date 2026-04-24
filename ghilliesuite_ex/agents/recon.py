@@ -7,8 +7,11 @@ Pipeline order:
   1) subfinder  -> subdomains
   2) httpx      -> HTTP probing (file-based handoff)
   3) katana     -> crawl live hosts (concurrent, file-based JSONL)
-  4) gau        -> historical URLs (existing add-on stage)
-  5) arjun      -> parameter discovery (existing add-on stage)
+  4) gau        -> historical URLs (default add-on stage)
+  5) arjun      -> parameter discovery (default add-on stage)
+  6) dnsx       -> DNS enrichment (optional)
+  7) naabu      -> port scan enrichment (optional)
+  8) subzy      -> takeover checks (optional)
 
 Auth credentials from cfg.auth_headers_flags are injected into httpx and katana
 commands so authenticated endpoints are probed correctly.
@@ -24,10 +27,12 @@ from urllib.parse import urlsplit
 from rich.status import Status
 
 from ghilliesuite_ex.arsenal import build_command
-from ghilliesuite_ex.state.models import Endpoint, Host, Screenshot
+from ghilliesuite_ex.state.models import Endpoint, Finding, Host, Screenshot, Service
 from ghilliesuite_ex.utils.executor import run_tool, run_tool_to_file
 from ghilliesuite_ex.utils.parsers import (
     get_parser,
+    parse_dnsx,
+    parse_naabu,
     parse_subfinder,
     parse_arjun,
     parse_gowitness,
@@ -44,6 +49,12 @@ _HTTPX_IN         = _TMP_DIR / "httpx_in.txt"
 _HTTPX_OUT        = _TMP_DIR / "httpx_out.json"
 _ARJUN_IN         = _TMP_DIR / "arjun_in.txt"
 _ARJUN_OUT        = _TMP_DIR / "arjun_out.json"
+_DNSX_IN          = _TMP_DIR / "dnsx_in.txt"
+_DNSX_OUT         = _TMP_DIR / "dnsx_out.json"
+_NAABU_IN         = _TMP_DIR / "naabu_in.txt"
+_NAABU_OUT        = _TMP_DIR / "naabu_out.json"
+_SUBZY_IN         = _TMP_DIR / "subzy_in.txt"
+_SUBZY_OUT        = _TMP_DIR / "subzy_out.json"
 
 _ARJUN_STATIC_EXTS = (
     ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
@@ -97,8 +108,9 @@ class ReconAgent(BaseAgent):
     """
     Runs a file-based core chain:
       subfinder -> httpx -> katana
-    then existing add-on stages:
-      gau -> arjun
+    then add-on stages:
+      gau -> arjun (enabled by default)
+      dnsx -> naabu -> subzy (optional toggles)
     All tools have hitl_required=False so no user confirmation is needed.
     Auth credentials from cfg are injected into httpx and katana.
     """
@@ -116,6 +128,9 @@ class ReconAgent(BaseAgent):
         katana_last_crawl_run: dict[str, int] = getattr(self, "_katana_last_crawl_run", {})
         gau_history: set[str] = getattr(self, "_gau_history", set())
         arjun_history: set[str] = getattr(self, "_arjun_history", set())
+        dnsx_history: set[str] = getattr(self, "_dnsx_history", set())
+        naabu_history: set[str] = getattr(self, "_naabu_history", set())
+        subzy_history: set[str] = getattr(self, "_subzy_history", set())
 
         # Phase 1: subfinder
         self.console.print(f"[cyan]  Phase 1 - subfinder -> {target}[/cyan]")
@@ -508,12 +523,237 @@ class ReconAgent(BaseAgent):
         else:
             self.console.print("[dim]arjun: skipped (no new endpoints)[/dim]")
 
+        # Optional add-on: dnsx (explicitly gated by config/CLI toggle)
+        dnsx_hosts_added = 0
+        if getattr(self.cfg, "recon_enable_dnsx", False):
+            if root_domain in dnsx_history:
+                self.console.print("[dim]dnsx: skipped (already ran for target)[/dim]")
+            else:
+                try:
+                    dnsx_targets = list(
+                        dict.fromkeys(d for d in subdomains if d and is_in_scope(d, self.scope))
+                    )
+                    if dnsx_targets:
+                        self.console.print(
+                            f"[cyan]  Optional - dnsx DNS enrichment ({len(dnsx_targets)} domain(s))[/cyan]"
+                        )
+                        _DNSX_IN.write_text("\n".join(dnsx_targets) + "\n", encoding="utf-8")
+                        dnsx_cmd = build_command(
+                            "dnsx",
+                            target,
+                            input_file=_DNSX_IN,
+                            output_file=_DNSX_OUT,
+                        )
+                        with Status("[cyan]Running dnsx...[/cyan]", console=self.console):
+                            dnsx_result = await run_tool_to_file(dnsx_cmd, _DNSX_OUT, timeout=timeout)
+
+                        if dnsx_result.ok or dnsx_result.output_file:
+                            rows = parse_dnsx(output_path=dnsx_result.output_file or _DNSX_OUT)
+                            for row in rows:
+                                domain = str(row.get("domain") or "").strip().lower()
+                                ip = str(row.get("ip") or "").strip()
+                                if not domain or not is_in_scope(domain, self.scope):
+                                    continue
+                                await self.db.upsert_host(Host(domain=domain, ip=ip))
+                                items_added += 1
+                                dnsx_hosts_added += 1
+                            dnsx_history.add(root_domain)
+                        else:
+                            self.console.print(
+                                f"[dim]dnsx: {dnsx_result.error or dnsx_result.stderr[:100]}[/dim]"
+                            )
+
+                        tool_result_panel(
+                            self.console, "dnsx",
+                            dnsx_cmd, dnsx_result.ok or bool(dnsx_result.output_file),
+                            f"Resolved {dnsx_hosts_added} in-scope host/IP mapping(s)",
+                        )
+                    else:
+                        self.console.print("[dim]dnsx: skipped (no in-scope domains)[/dim]")
+                except Exception as exc:
+                    self.console.print(f"[dim]dnsx: non-blocking error - {exc}[/dim]")
+        else:
+            self.console.print("[dim]dnsx: skipped (RECON_ENABLE_DNSX=0)[/dim]")
+
+        # Optional add-on: naabu (explicitly gated by config/CLI toggle)
+        naabu_services_added = 0
+        if getattr(self.cfg, "recon_enable_naabu", False):
+            if root_domain in naabu_history:
+                self.console.print("[dim]naabu: skipped (already ran for target)[/dim]")
+            else:
+                try:
+                    host_rows = await self.db.get_hosts(self.scope)
+                    naabu_targets = list(dict.fromkeys(h.domain for h in host_rows if h.domain))
+                    if not naabu_targets:
+                        naabu_targets = list(
+                            dict.fromkeys(d for d in subdomains if d and is_in_scope(d, self.scope))
+                        )
+
+                    if naabu_targets:
+                        self.console.print(
+                            f"[cyan]  Optional - naabu service scan ({len(naabu_targets)} host(s))[/cyan]"
+                        )
+                        _NAABU_IN.write_text("\n".join(naabu_targets) + "\n", encoding="utf-8")
+                        naabu_cmd = build_command(
+                            "naabu",
+                            target,
+                            input_file=_NAABU_IN,
+                            output_file=_NAABU_OUT,
+                        )
+                        with Status("[cyan]Running naabu...[/cyan]", console=self.console):
+                            naabu_result = await run_tool_to_file(naabu_cmd, _NAABU_OUT, timeout=timeout)
+
+                        if naabu_result.ok or naabu_result.output_file:
+                            parsed_rows = parse_naabu(output_path=naabu_result.output_file or _NAABU_OUT)
+
+                            hosts_now = await self.db.get_hosts(self.scope)
+                            host_by_domain = {h.domain: h for h in hosts_now}
+                            ip_to_domain: dict[str, str] = {}
+                            for h in hosts_now:
+                                for ip_candidate in str(h.ip or "").split(","):
+                                    ip_candidate = ip_candidate.strip()
+                                    if ip_candidate:
+                                        ip_to_domain[ip_candidate] = h.domain
+
+                            for row in parsed_rows:
+                                host_raw = str(row.get("host") or "").strip().lower()
+                                ip_raw = str(row.get("ip") or "").strip()
+                                port = int(row.get("port") or 0)
+                                proto = str(row.get("proto") or "tcp").strip().lower() or "tcp"
+                                if port <= 0:
+                                    continue
+
+                                domain = host_raw
+                                if domain and not is_in_scope(domain, self.scope):
+                                    domain = ip_to_domain.get(ip_raw, "")
+                                if not domain:
+                                    domain = ip_to_domain.get(ip_raw, "")
+                                if not domain or not is_in_scope(domain, self.scope):
+                                    continue
+
+                                host = host_by_domain.get(domain)
+                                host_id = host.id if host else 0
+                                if not host_id:
+                                    host_id = await self.db.upsert_host(Host(domain=domain, ip=ip_raw))
+                                    host_by_domain[domain] = Host(id=host_id, domain=domain, ip=ip_raw)
+
+                                if host_id:
+                                    await self.db.insert_service(
+                                        Service(
+                                            host_id=host_id,
+                                            port=port,
+                                            proto=proto,
+                                            source_tool="naabu",
+                                        )
+                                    )
+                                    items_added += 1
+                                    naabu_services_added += 1
+
+                            naabu_history.add(root_domain)
+                        else:
+                            self.console.print(
+                                f"[dim]naabu: {naabu_result.error or naabu_result.stderr[:100]}[/dim]"
+                            )
+
+                        tool_result_panel(
+                            self.console, "naabu",
+                            naabu_cmd, naabu_result.ok or bool(naabu_result.output_file),
+                            f"Stored {naabu_services_added} service record(s)",
+                        )
+                    else:
+                        self.console.print("[dim]naabu: skipped (no hosts to scan)[/dim]")
+                except Exception as exc:
+                    self.console.print(f"[dim]naabu: non-blocking error - {exc}[/dim]")
+        else:
+            self.console.print("[dim]naabu: skipped (RECON_ENABLE_NAABU=0)[/dim]")
+
+        # Optional add-on: subzy (explicitly gated by config/CLI toggle)
+        subzy_findings_added = 0
+        if getattr(self.cfg, "recon_enable_subzy", False):
+            if root_domain in subzy_history:
+                self.console.print("[dim]subzy: skipped (already ran for target)[/dim]")
+            else:
+                try:
+                    subzy_targets = list(
+                        dict.fromkeys(d for d in subdomains if d and is_in_scope(d, self.scope))
+                    )
+                    if not subzy_targets:
+                        subzy_targets = list(
+                            dict.fromkeys(h.domain for h in await self.db.get_hosts(self.scope) if h.domain)
+                        )
+
+                    if subzy_targets:
+                        self.console.print(
+                            f"[cyan]  Optional - subzy takeover check ({len(subzy_targets)} domain(s))[/cyan]"
+                        )
+                        _SUBZY_IN.write_text("\n".join(subzy_targets) + "\n", encoding="utf-8")
+                        subzy_cmd = build_command(
+                            "subzy",
+                            target,
+                            input_file=_SUBZY_IN,
+                            output_file=_SUBZY_OUT,
+                        )
+                        with Status("[cyan]Running subzy...[/cyan]", console=self.console):
+                            subzy_result = await run_tool_to_file(subzy_cmd, _SUBZY_OUT, timeout=timeout)
+
+                        if subzy_result.ok or subzy_result.output_file:
+                            parsed_rows = get_parser("subzy")(output_path=subzy_result.output_file or _SUBZY_OUT)
+                            for row in parsed_rows:
+                                domain = str(row.get("domain") or "").strip().lower()
+                                status = str(row.get("status") or "").strip()
+                                service = str(row.get("service") or "").strip()
+                                vulnerable = bool(row.get("vulnerable")) or ("vulnerable" in status.lower())
+                                if not domain or not vulnerable or not is_in_scope(domain, self.scope):
+                                    continue
+
+                                evidence = f"subzy flagged potential takeover on {domain}"
+                                if service:
+                                    evidence += f" (service: {service})"
+
+                                await self.db.insert_finding(
+                                    Finding(
+                                        tool="subzy",
+                                        target=domain,
+                                        severity="high",
+                                        title="Potential subdomain takeover",
+                                        evidence=evidence,
+                                        reproducible_steps=(
+                                            "1. Verify dangling DNS/CNAME for the subdomain.\n"
+                                            "2. Attempt provider ownership claim workflow.\n"
+                                            "3. Re-check HTTP response and takeover proof."
+                                        ),
+                                        raw_output=f"status={status}; service={service}",
+                                    )
+                                )
+                                items_added += 1
+                                subzy_findings_added += 1
+                            subzy_history.add(root_domain)
+                        else:
+                            self.console.print(
+                                f"[dim]subzy: {subzy_result.error or subzy_result.stderr[:100]}[/dim]"
+                            )
+
+                        tool_result_panel(
+                            self.console, "subzy",
+                            subzy_cmd, subzy_result.ok or bool(subzy_result.output_file),
+                            f"Potential takeover findings stored: {subzy_findings_added}",
+                        )
+                    else:
+                        self.console.print("[dim]subzy: skipped (no in-scope subdomains)[/dim]")
+                except Exception as exc:
+                    self.console.print(f"[dim]subzy: non-blocking error - {exc}[/dim]")
+        else:
+            self.console.print("[dim]subzy: skipped (RECON_ENABLE_SUBZY=0)[/dim]")
+
         setattr(self, "_httpx_history", httpx_history)
         setattr(self, "_katana_history", katana_history)
         setattr(self, "_katana_last_crawl_run", katana_last_crawl_run)
         setattr(self, "_recon_run_count", recon_run_count)
         setattr(self, "_gau_history", gau_history)
         setattr(self, "_arjun_history", arjun_history)
+        setattr(self, "_dnsx_history", dnsx_history)
+        setattr(self, "_naabu_history", naabu_history)
+        setattr(self, "_subzy_history", subzy_history)
 
         return AgentResult(
             agent=self.name,

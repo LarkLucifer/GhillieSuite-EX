@@ -212,6 +212,24 @@ def hunt(
         help="Enable gowitness screenshots during recon (optional).",
         is_flag=True,
     ),
+    recon_dnsx: Optional[bool] = typer.Option(
+        None,
+        "--recon-dnsx/--no-recon-dnsx",
+        help="Enable/disable optional dnsx recon add-on (default follows RECON_ENABLE_DNSX).",
+        show_default=False,
+    ),
+    recon_naabu: Optional[bool] = typer.Option(
+        None,
+        "--recon-naabu/--no-recon-naabu",
+        help="Enable/disable optional naabu recon add-on (default follows RECON_ENABLE_NAABU).",
+        show_default=False,
+    ),
+    recon_subzy: Optional[bool] = typer.Option(
+        None,
+        "--recon-subzy/--no-recon-subzy",
+        help="Enable/disable optional subzy recon add-on (default follows RECON_ENABLE_SUBZY).",
+        show_default=False,
+    ),
     proxy: Optional[str] = typer.Option(
         None,
         "--proxy", "-p",
@@ -338,6 +356,9 @@ def hunt(
         header=header,
         proxy=proxy,
         screenshots=screenshots,
+        recon_dnsx=recon_dnsx,
+        recon_naabu=recon_naabu,
+        recon_subzy=recon_subzy,
         ai_planner=ai_planner,
         force_auto=force_auto,
         force_exploit=force_exploit,
@@ -383,6 +404,9 @@ async def _async_hunt(
     header: str | None,
     proxy: str | None = None,
     screenshots: bool = False,
+    recon_dnsx: bool | None = None,
+    recon_naabu: bool | None = None,
+    recon_subzy: bool | None = None,
     ai_planner: bool = False,
     force_auto: bool = False,
     force_exploit: bool = False,
@@ -532,6 +556,13 @@ async def _async_hunt(
     if js_llm_timeout is not None:
         cfg.js_llm_timeout = js_llm_timeout
 
+    if recon_dnsx is not None:
+        cfg.recon_enable_dnsx = bool(recon_dnsx)
+    if recon_naabu is not None:
+        cfg.recon_enable_naabu = bool(recon_naabu)
+    if recon_subzy is not None:
+        cfg.recon_enable_subzy = bool(recon_subzy)
+
     cfg.turbo_mode = turbo
 
     if turbo:
@@ -545,6 +576,13 @@ async def _async_hunt(
         f"snippet_max_len={cfg.js_snippet_max_len}, "
         f"http_timeout={cfg.js_http_timeout}s, "
         f"llm_timeout={cfg.js_llm_timeout}s"
+    )
+    console.print(
+        "[bold cyan]Recon add-ons:[/bold cyan] "
+        f"dnsx={'on' if cfg.recon_enable_dnsx else 'off'}, "
+        f"naabu={'on' if cfg.recon_enable_naabu else 'off'}, "
+        f"subzy={'on' if cfg.recon_enable_subzy else 'off'} "
+        "[dim](gau/arjun remain enabled by default)[/dim]"
     )
 
     if cfg.is_authenticated:

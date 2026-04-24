@@ -234,6 +234,20 @@ class Config:
     )
     """Maximum in-scope endpoints inserted from one Katana target crawl."""
 
+    # —— Optional recon add-ons (OFF by default; enable via env/CLI)
+    recon_enable_dnsx: bool = field(
+        default_factory=lambda: os.getenv("RECON_ENABLE_DNSX", "0").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+    recon_enable_naabu: bool = field(
+        default_factory=lambda: os.getenv("RECON_ENABLE_NAABU", "0").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+    recon_enable_subzy: bool = field(
+        default_factory=lambda: os.getenv("RECON_ENABLE_SUBZY", "0").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+
     # ── SQLite state DB path
     # Hardcoded to a stable home-directory path so the DB is always found
     # regardless of CWD, enabling 100% reliable 4-day unattended runs.
