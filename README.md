@@ -23,18 +23,20 @@ The tool does **not** replace manual testing. It automates the boring reconnaiss
 
 ```
 SupervisorAgent  (LLM decision loop, max_loops iterations)
-├── ReconAgent   → subfinder → dnsx → naabu → httpx → katana → gau → arjun
-│                  All inter-tool handoffs via tmp/ files (no stdin piping)
-├── ExploitAgent → nuclei → dalfox [HitL] → sqlmap [HitL] → ffuf
-│                  + passive JS inspection, BOLA/GraphQL heuristics
-└── ReporterAgent → reports/<target>_<ts>.html + .json
+|- ReconAgent   -> CORE: subfinder -> httpx -> katana
+|                ADD-ONS (default ON): gau -> arjun
+|                ADD-ONS (default OFF): dnsx / naabu / subzy (via RECON_ENABLE_* or CLI flags)
+|                All inter-tool handoffs via tmp/ files (no stdin piping)
+|- ExploitAgent -> nuclei -> dalfox [HitL] -> sqlmap [HitL] -> ffuf
+|                + passive JS inspection, BOLA/GraphQL heuristics
+`- ReporterAgent -> reports/<target>_<ts>.html + .json
 
 StateDB (SQLite @ ~/GhillieSuite-EX/ghilliesuite_state.db)
-├── hosts      (domain, ip, status_code, title, tech_stack)
-├── services   (host_id, port, proto)
-├── endpoints  (url, params, source_tool)
-├── findings   (severity, template_id, title, matched_url, evidence)
-└── screenshots (optional, requires --screenshots + gowitness)
+|- hosts       (domain, ip, status_code, title, tech_stack)
+|- services    (host_id, port, proto)
+|- endpoints   (url, params, source_tool)
+|- findings    (severity, template_id, title, matched_url, evidence)
+`- screenshots (optional, requires --screenshots + gowitness)
 ```
 
 ---
@@ -61,25 +63,39 @@ cp .env.example .env
 
 ### 3. Install security tools
 
-All tools below must be on `$PATH`. Install only the ones you need.
+Core pipeline binaries:
 
 | Tool | Install |
 |------|---------|
 | subfinder | `go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
-| dnsx | `go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest` |
-| naabu | `go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` |
 | httpx | `go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest` |
 | katana | `go install github.com/projectdiscovery/katana/cmd/katana@latest` |
+| nuclei | `go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
+
+Default recon add-ons (enabled):
+
+| Tool | Install |
+|------|---------|
 | gau | `go install github.com/lc/gau/v2/cmd/gau@latest` |
 | arjun | `pip install arjun` |
+
+Optional recon add-ons (disabled by default):
+
+| Tool | Install |
+|------|---------|
+| dnsx | `go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest` |
+| naabu | `go install -v github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` |
 | subzy | `go install github.com/lukasikic/subzy@latest` |
+
+Other optional tooling:
+
+| Tool | Install |
+|------|---------|
 | gowitness | `go install github.com/sensepost/gowitness@latest` |
-| nuclei | `go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
 | dalfox | `go install github.com/hahwul/dalfox/v2@latest` |
 | sqlmap | `pip install sqlmap` |
 | trufflehog | `go install github.com/trufflesecurity/trufflehog/v3@latest` |
 | ffuf | `go install github.com/ffuf/ffuf/v2@latest` |
-
 ### 4. Verify
 
 ```bash
@@ -133,6 +149,11 @@ Execution control:
   --safe-mode           Require HitL for every tool, including nuclei
   --allow-redirects     httpx follows HTTP redirects during recon
 
+Recon add-on toggles:
+  --recon-dnsx / --no-recon-dnsx     Enable/disable dnsx (default follows RECON_ENABLE_DNSX)
+  --recon-naabu / --no-recon-naabu   Enable/disable naabu (default follows RECON_ENABLE_NAABU)
+  --recon-subzy / --no-recon-subzy   Enable/disable subzy (default follows RECON_ENABLE_SUBZY)
+
 Auth & proxy:
   --cookie / --cookies  Session cookie string
   --header              Custom HTTP header (e.g. Authorization: Bearer ...)
@@ -155,20 +176,19 @@ GhillieSuite-EX.sec version       Show version
 
 ### ReconAgent (always runs)
 
-| Step | Tool | What it does |
+| Stage | Tool | What it does |
 |------|------|--------------|
-| 1 | subfinder | Passive subdomain enumeration from crt.sh, VirusTotal, etc. |
-| 2 | dnsx | DNS resolution — filters dead subdomains |
-| 3 | naabu | Top-1000 port scan on live hosts |
-| 4 | httpx | HTTP probe — status, title, tech stack detection. WAF-friendly flags (`-random-agent`, `-rl 15`) |
-| 5 | katana | Web crawl — JSONL output, configurable depth. Concurrent targets via `asyncio.gather()` |
-| 6 | gau | Historical URL lookup (Wayback Machine, CommonCrawl, URLScan) |
-| 7 | arjun | Parameter discovery on high-value endpoints only |
-| Optional | subzy | Subdomain takeover fingerprint checks |
-| Optional | gowitness | Screenshot capture |
+| Core 1 | subfinder | Passive subdomain enumeration from crt.sh, VirusTotal, etc. |
+| Core 2 | httpx | HTTP probe from subfinder output via file handoff (`tmp/httpx_in.txt` -> `tmp/httpx_out.json`). |
+| Core 3 | katana | Deep crawl of live hosts from httpx; concurrent targets, recrawl interval, and per-target endpoint cap enforced. |
+| Add-on (default ON) | gau | Historical URL enrichment (Wayback Machine, CommonCrawl, URLScan). |
+| Add-on (default ON) | arjun | Hidden parameter discovery on high-value endpoints only. |
+| Add-on (default OFF) | dnsx | DNS enrichment for discovered subdomains. |
+| Add-on (default OFF) | naabu | Service/port enrichment for discovered hosts. |
+| Add-on (default OFF) | subzy | Subdomain takeover fingerprint checks. |
+| Optional | gowitness | Screenshot capture. |
 
 URL filtering: static assets (images, fonts, CSS, source maps) are dropped before storage. Only parameterised URLs and high-value paths (`/api/`, `/admin`, `/auth`, etc.) are kept.
-
 ### ExploitAgent
 
 | Stage | Tool / Method | Notes |
@@ -234,13 +254,35 @@ NUCLEI_TAGS=cve,sqli,xss,...           # see config.py for full default list
 ## Katana Configuration
 
 ```bash
-KATANA_MAX_TARGETS=10    # concurrent crawl targets (raise to 25+ on VPS)
-KATANA_RATE_LIMIT=25     # req/s per target
-KATANA_DEPTH=2           # crawl depth
-KATANA_HEADLESS=0        # set to 1 for SPA/React targets (requires playwright)
+KATANA_MAX_TARGETS=20                # max concurrent crawl targets
+KATANA_RATE_LIMIT=30                 # req/s per target
+KATANA_DEPTH=6                       # deep crawl depth
+KATANA_RECRAWL_INTERVAL=3            # recrawl a previously-seen target every 3 recon loops
+KATANA_MAX_ENDPOINTS_PER_TARGET=4000 # hard cap to prevent single-target DB flooding
+KATANA_HEADLESS=0                    # set to 1 for SPA/React targets (requires playwright)
 ```
 
-Katana uses `asyncio.gather()` to crawl up to `KATANA_MAX_TARGETS` hosts concurrently, with each target writing to its own JSONL file to prevent output conflicts.
+Katana uses per-target JSONL output files and async concurrent crawling. The crawler only inserts in-scope endpoints and stops at `KATANA_MAX_ENDPOINTS_PER_TARGET` for each target.
+
+---
+
+## Recon Add-on Toggles
+
+Optional recon add-ons are disabled by default and controlled by env or CLI:
+
+```bash
+# .env
+RECON_ENABLE_DNSX=0
+RECON_ENABLE_NAABU=0
+RECON_ENABLE_SUBZY=0
+
+# CLI overrides
+--recon-dnsx / --no-recon-dnsx
+--recon-naabu / --no-recon-naabu
+--recon-subzy / --no-recon-subzy
+```
+
+If an optional add-on is skipped or fails, ReconAgent continues without interrupting the core `subfinder -> httpx -> katana` pipeline.
 
 ---
 
