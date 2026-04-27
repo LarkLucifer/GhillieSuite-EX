@@ -19,8 +19,6 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
-_verify_session: Any = None
-
 # ── WAF Fingerprint Signals ──────────────────────────────────────────────────
 # Each entry: (signal_type, pattern/keyword, vendor, weight)
 # signal_type: "header" checks response headers, "body" checks response body.
@@ -460,18 +458,6 @@ async def verify_bypass(
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
-        # Connection pooling
-        global _verify_session
-        if '_verify_session' not in globals() or _verify_session is None:
-            if use_curl:
-                try:
-                    _verify_session = _requests.Session(impersonate="chrome120")
-                except TypeError:
-                    _verify_session = _requests.Session()
-                _verify_session.verify = False
-            else:
-                _verify_session = _requests.AsyncClient(verify=False)
-
         def _do_request():
             # Advanced Header Rotation for modern WAF evasion
             from ghilliesuite_ex.agents.recon import _USER_AGENTS
@@ -491,14 +477,29 @@ async def verify_bypass(
             }
             if auth_headers:
                 headers.update(auth_headers)
-            
-            return _verify_session.get(
-                injected_url,
-                timeout=timeout,
-                allow_redirects=True,
-                headers=headers,
-                verify=False
-            )
+
+            if use_curl:
+                try:
+                    session = _requests.Session(impersonate="chrome120", verify=False)
+                except TypeError:
+                    session = _requests.Session(verify=False)
+                with session:
+                    return session.get(
+                        injected_url,
+                        timeout=timeout,
+                        allow_redirects=True,
+                        headers=headers
+                    )
+            else:
+                # Fallback path requires synchronous execution in _run_in_thread
+                session = _requests.Client(verify=False)
+                with session:
+                    return session.get(
+                        injected_url,
+                        timeout=timeout,
+                        follow_redirects=True,
+                        headers=headers
+                    )
 
         resp = await _run_in_thread(_do_request)
         
