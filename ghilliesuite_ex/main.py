@@ -659,22 +659,6 @@ async def _async_hunt(
 
     # ── Environment sanity checks ──────────────────────────────────────────
     # Target isolation is handled centrally inside StateDB.
-    if False:  # Legacy DB reset path intentionally disabled; StateDB owns target isolation.
-        try:
-            with sqlite3.connect(db_file) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT value FROM meta WHERE key = 'target'")
-                row = cursor.fetchone()
-                if row and row[0] != target:
-                    console.print(f"[bold yellow]⚠ Stored target '{row[0]}' differs from current '{target}'. Shredding old DB to prevent data mixing.[/bold yellow]")
-                    conn.close()
-                    os.remove(db_file)
-        except Exception:
-            # If the database is malformed or locked, safest approach is deletion
-            try:
-                os.remove(db_file)
-            except OSError:
-                pass
 
     # ── Initialise DB and run supervisor ──────────────────────────────────
     console.print()

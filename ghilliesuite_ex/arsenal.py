@@ -637,8 +637,6 @@ def build_command(
         if cookie_val:
             if tool_name == "sqlmap" and "--cookie=" not in "".join(cmd):
                 cmd.append(f"--cookie={cookie_val}")
-            elif tool_name == "dalfox" and "-C" not in cmd:
-                cmd.extend(["-C", cookie_val])
             elif tool_name in ("nuclei", "httpx", "ffuf", "katana"):
                 # Use standard header injection if not already present
                 if not any("cookie:" in str(tok).lower() for tok in cmd):
