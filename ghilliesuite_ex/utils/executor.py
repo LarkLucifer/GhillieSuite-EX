@@ -29,7 +29,17 @@ from pathlib import Path
 
 _EVASION_COOLDOWN_SECONDS = 60
 _last_waf_block_time = 0.0
-_cooldown_lock = asyncio.Lock()
+# B-10 fix: do NOT create asyncio primitives at module import time — they must
+# be created inside a running event loop.  Lazy-initialise on first use.
+_cooldown_lock: asyncio.Lock | None = None
+
+
+def _get_cooldown_lock() -> asyncio.Lock:
+    """Return the WAF-cooldown lock, creating it lazily inside the running loop."""
+    global _cooldown_lock
+    if _cooldown_lock is None:
+        _cooldown_lock = asyncio.Lock()
+    return _cooldown_lock
 
 
 MAX_OUTPUT_BYTES = 512 * 1024  # 512 KB cap on raw stdout
@@ -39,10 +49,13 @@ MAX_OUTPUT_BYTES = 512 * 1024  # 512 KB cap on raw stdout
 class ToolResult:
     """Return value from run_tool() and run_tool_to_file()."""
 
-    stdout: str
-    stderr: str
-    returncode: int
-    error: str = ""          # populated on exceptions (timeout, missing binary, etc.)
+    # B-05: all str fields have explicit defaults so ToolResult can never have
+    # None for stdout/stderr (guards against TypeError on [:100] slices when
+    # callers construct the dataclass partially in tests or error paths).
+    stdout:     str  = field(default="")
+    stderr:     str  = field(default="")
+    returncode: int  = field(default=0)
+    error:      str  = field(default="")   # populated on exceptions (timeout, missing binary, etc.)
     output_file: Path | None = field(default=None)  # set by run_tool_to_file()
 
     @property
@@ -78,7 +91,7 @@ async def run_tool(
 
     # Global Evasion Cooldown Check — sleep OUTSIDE lock to avoid blocking other tools
     wait_needed = 0.0
-    async with _cooldown_lock:
+    async with _get_cooldown_lock():
         now = time.time()
         elapsed = now - _last_waf_block_time
         if elapsed < _EVASION_COOLDOWN_SECONDS:
@@ -126,7 +139,7 @@ async def run_tool(
         # Detect WAF Blocks (403/429)
         combined = (stdout_text + stderr_text).lower()
         if "403 forbidden" in combined or "429 too many requests" in combined:
-            async with _cooldown_lock:
+            async with _get_cooldown_lock():
                 _last_waf_block_time = time.time()
 
         return res
@@ -190,7 +203,7 @@ async def run_tool_to_file(
 
     # Global Evasion Cooldown Check — sleep OUTSIDE lock to avoid blocking other tools
     wait_needed = 0.0
-    async with _cooldown_lock:
+    async with _get_cooldown_lock():
         now = time.time()
         elapsed = now - _last_waf_block_time
         if elapsed < _EVASION_COOLDOWN_SECONDS:
@@ -236,7 +249,7 @@ async def run_tool_to_file(
         # Detect WAF Blocks (403/429)
         combined = (stdout_text + stderr_text).lower()
         if "403 forbidden" in combined or "429 too many requests" in combined:
-            async with _cooldown_lock:
+            async with _get_cooldown_lock():
                 _last_waf_block_time = time.time()
 
         return res

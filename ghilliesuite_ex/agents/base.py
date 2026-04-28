@@ -142,6 +142,9 @@ async def _run_in_thread(fn, *args, **kwargs):
     Run a synchronous function in a thread pool so it doesn't block the event loop.
     Needed for the synchronous google-generativeai SDK.
     """
-    import asyncio
-    loop = asyncio.get_event_loop()
+    # B-13 fix: redundant inner import removed (asyncio already imported at module top).
+    # B-13 fix: get_running_loop() is the correct call inside a coroutine.
+    # get_event_loop() is deprecated in Python 3.10+ and may return the wrong
+    # loop if the module was imported before asyncio.run() started.
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))

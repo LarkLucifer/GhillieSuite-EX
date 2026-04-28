@@ -589,9 +589,11 @@ def build_command(
         A fully-formed list[str] ready for asyncio.create_subprocess_exec.
     """
     spec = TOOL_REGISTRY[tool_name]
-    if spec.uses_output_file and output_file is None:
+    # B-08: use `not output_file` instead of `output_file is None` so that an
+    # empty Path("") is also caught (truthy check: Path("") is falsy).
+    if spec.uses_output_file and not output_file:
         raise ValueError(f"{tool_name} requires output_file but none was provided")
-    if spec.uses_input_file and input_file is None:
+    if spec.uses_input_file and not input_file:
         raise ValueError(f"{tool_name} requires input_file but none was provided")
     out_str = str(output_file) if output_file else ""
     in_str  = str(input_file)  if input_file  else ""
@@ -625,7 +627,10 @@ def build_command(
         tok = tok.replace("{target}",       target)
         tok = tok.replace("{output_file}",  out_str)
         tok = tok.replace("{input_file}",   in_str)
-        tok = tok.replace("{wordlist}",     wl_str)
+        # B-07: only substitute {wordlist} for ffuf — other tools never use
+        # this placeholder and a stray match would silently corrupt their args.
+        if tool_name == "ffuf":
+            tok = tok.replace("{wordlist}", wl_str or "")
         tok = tok.replace("{katana_depth}", katana_depth_val)
         tok = tok.replace("{katana_rl}",    katana_rl_val)
         cmd.append(tok)

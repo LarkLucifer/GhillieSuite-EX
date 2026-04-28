@@ -372,14 +372,18 @@ def hunt(
         turbo=turbo,
     )
 
+    # B-01/B-02 fix: asyncio.run() is the only correct synchronous entry-point
+    # for a Typer command launching an async pipeline.  It always creates a
+    # fresh event loop, runs the coroutine to completion, and propagates
+    # exceptions cleanly.  The old get_event_loop()/create_task() path was
+    # fire-and-forget — all errors were silently swallowed.
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(coro)
-        else:
-            loop.run_until_complete(coro)
-    except RuntimeError:
-        asyncio.run(coro)
+        success = asyncio.run(coro)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Hunt interrupted by user (Ctrl+C).[/yellow]")
+        raise typer.Exit(code=130)
+    if not success:
+        raise typer.Exit(code=1)
 
 
 async def _async_hunt(
@@ -418,8 +422,8 @@ async def _async_hunt(
     js_http_timeout: float | None = None,
     js_llm_timeout: float | None = None,
     turbo: bool = False,
-) -> None:
-    """Async implementation of the hunt command."""
+) -> bool:
+    """Async implementation of the hunt command.  Returns True on success, False on fatal preflight failure."""
     from ghilliesuite_ex.config import cfg, validate_config
     from ghilliesuite_ex.agents.supervisor import SupervisorAgent
     from ghilliesuite_ex.agents.base import AgentTask
@@ -452,7 +456,7 @@ async def _async_hunt(
         cfg.set_execution_profile(normalize_execution_profile(profile))
     except ValueError as exc:
         console.print(f"[bold red]Profile error:[/bold red] {exc}")
-        raise typer.Exit(code=1)
+        return False  # B-03: propagate failure via return value, not typer.Exit inside a coroutine
 
     if cookie:
         cfg.auth_cookie = cookie.strip()
@@ -613,7 +617,7 @@ async def _async_hunt(
         scope_domains = load_scope(scope_input)
     except (ValueError, FileNotFoundError) as exc:
         console.print(f"[bold red]Scope error:[/bold red] {exc}")
-        raise typer.Exit(code=1)
+        return False  # B-03
 
     console.print(f"[green]✔[/green] Scope loaded: {', '.join(scope_domains)}")
 
@@ -627,7 +631,7 @@ async def _async_hunt(
             f"   Scope: {', '.join(scope_domains)}\n"
             "   Adjust the target or scope rules and retry."
         )
-        raise typer.Exit(code=1)
+        return False  # B-03
 
     # ── Binary availability check ──────────────────────────────────────────
     console.print()
@@ -639,7 +643,7 @@ async def _async_hunt(
             f"\n[bold red]Missing required recon tools:[/bold red] {', '.join(missing)}\n"
             "Install them and ensure they are on your PATH, then re-run the hunt."
         )
-        raise typer.Exit(code=1)
+        return False  # B-03
 
     # ── Nuclei template update (runs before hunting starts) ──────────────
     if update_templates:
@@ -698,6 +702,7 @@ async def _async_hunt(
             )
 
     console.print(f"\n[bold bright_green]Hunt complete! {result_summary}[/bold bright_green]")
+    return True
 def _build_ai_client(config):
     """
     Construct the AI client using the auto-detected provider stored in cfg.
