@@ -19,6 +19,7 @@ hcli_state.db
 reports/
 output/
 *.json
+tmp/
 # Kecualikan README.md agar tetap ter-upload
 !README.md 
 !scope_example.txt
