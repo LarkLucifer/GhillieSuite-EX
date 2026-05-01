@@ -15,6 +15,7 @@ Priority order: OpenAI > Gemini
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -315,12 +316,23 @@ class Config:
         Build the flat -H flag list consumed by build_command(auth_headers=...).
         Returns an empty list when no auth has been configured.
 
+        Cookie sanitization: browser DevTools copies cookies as multiline strings
+        (each cookie separated by ";\n"). We collapse them to a single line so
+        httpx / katana / nuclei receive a valid single-line header value.
+
         Example output when both are set:
           ["-H", "Cookie: session=abc", "-H", "Authorization: Bearer xyz"]
         """
         flags: list[str] = []
         if self.auth_cookie:
-            flags += ["-H", f"Cookie: {self.auth_cookie}"]
+            # Sanitize: strip whitespace, collapse newlines between cookies
+            # into "; " so the value is always a single-line HTTP header value.
+            c = self.auth_cookie.strip()
+            c = c.replace("\r\n", "; ").replace("\n", "; ").replace("\r", "")
+            c = re.sub(r";\s*;", ";", c)   # collapse double semicolons
+            c = re.sub(r";\s+", "; ", c)   # normalise spaces after semicolons
+            c = c.strip("; ")
+            flags += ["-H", f"Cookie: {c}"]
         if self.auth_header:
             flags += ["-H", self.auth_header]
         return flags

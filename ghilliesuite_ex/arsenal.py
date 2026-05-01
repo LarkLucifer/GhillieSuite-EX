@@ -635,20 +635,22 @@ def build_command(
         tok = tok.replace("{katana_rl}",    katana_rl_val)
         cmd.append(tok)
 
-    # Centralized Auth Injection for ALL tools
+    # Auth Injection for sqlmap (special --cookie= flag format)
+    # NOTE: For all other tools (httpx, katana, nuclei, ffuf), cookie injection
+    # is handled exclusively via auth_headers_flags → build_command(auth_headers=...)
+    # to prevent double-injection. auth_headers_flags sanitizes the cookie value
+    # (removes newlines from browser DevTools copy-paste) before injection.
     try:
         from ghilliesuite_ex.config import cfg as _cfg
         cookie_val = _cfg.auth_cookie
-        if cookie_val:
-            if tool_name == "sqlmap" and "--cookie=" not in "".join(cmd):
-                cmd.append(f"--cookie={cookie_val}")
-            elif tool_name in ("nuclei", "httpx", "ffuf", "katana"):
-                # Use standard header injection if not already present
-                if not any("cookie:" in str(tok).lower() for tok in cmd):
-                    if tool_name == "ffuf":
-                        cmd.extend(["-H", f"Cookie: {cookie_val}"])
-                    else:
-                        cmd.extend(["-H", f"Cookie: {cookie_val}"])
+        if cookie_val and tool_name == "sqlmap" and "--cookie=" not in "".join(cmd):
+            # Sanitize cookie for sqlmap as well
+            import re as _re
+            c = cookie_val.strip().replace("\r\n", "; ").replace("\n", "; ").replace("\r", "")
+            c = _re.sub(r";\s*;", ";", c)
+            c = _re.sub(r";\s+", "; ", c)
+            c = c.strip("; ")
+            cmd.append(f"--cookie={c}")
     except Exception:
         pass
 

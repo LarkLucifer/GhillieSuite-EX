@@ -205,8 +205,6 @@ class ReconAgent(BaseAgent):
                     auth_headers=auth_headers,
                 )
                 with Status("[cyan]Running httpx...[/cyan]", console=self.console):
-                    # [DEBUG] Print exact command list so mis-parsed flags are visible
-                    self.console.print(f"[dim yellow]  [DEBUG] httpx cmd: {' '.join(httpx_cmd)}[/dim yellow]")
                     httpx_result = await run_tool_to_file(httpx_cmd, _HTTPX_OUT, timeout=timeout)
 
 
