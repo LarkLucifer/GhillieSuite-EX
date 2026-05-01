@@ -72,8 +72,8 @@ def _extract_json_block(text: str) -> str:
     """Return the first JSON object found in text, or the original text."""
     cleaned = (text or "").strip()
     if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned)
-        cleaned = re.sub(r"\\s*```$", "", cleaned)
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -118,6 +118,12 @@ class SupervisorAgent(BaseAgent):
         last_hosts = -1
         last_endpoints = -1
         last_params = -1
+        # RC7: require 2 consecutive stable iterations before early exit.
+        # Previously the loop stopped after 1 stable recon run, which often meant
+        # exploit had not yet had a full pass. stable_streak ensures exploit
+        # completes at least once before the session terminates.
+        stable_streak = 0
+        exploit_ran = False
 
         for loop_idx in range(1, self.max_loops + 1):
             agent_panel(self.console, "ReconAgent", "subfinder, dnsx, naabu, httpx, katana, gau, arjun", target, loop_idx, self.max_loops)
@@ -153,10 +159,20 @@ class SupervisorAgent(BaseAgent):
                 )
                 total_findings += res_exploit.items_added if res_exploit.status == "ok" else 0
                 self.console.print(f"[dim]  -> ExploitAgent: {res_exploit.summary}[/dim]")
+                exploit_ran = True
 
+            # RC7: increment streak only when recon is stable; reset on new data.
             if recon_stable:
-                self.console.print("[dim]Recon produced no new hosts/endpoints. Exiting loop.[/dim]")
+                stable_streak += 1
+            else:
+                stable_streak = 0
+
+            # Exit only after 2 consecutive stable iterations AND exploit has run at least once.
+            if stable_streak >= 2 and exploit_ran:
+                self.console.print("[dim]Recon stable for 2 iterations and exploit complete. Exiting loop.[/dim]")
                 break
+            elif recon_stable and not exploit_ran:
+                self.console.print("[dim]Recon stable but exploit has not run yet -- continuing.[/dim]")
 
         self.console.print(Rule("[bold bright_green]Compiling Report[/bold bright_green]", style="bright_green"))
         await self.reporter_agent.run(AgentTask(target=target))
@@ -203,6 +219,7 @@ class SupervisorAgent(BaseAgent):
             return (None, reason)
 
         return (tool, reason)
+
     # ── Internal helpers ───────────────────────────────────────────────────────
 
     # Helper properties deleted to reduce bloat
@@ -228,11 +245,11 @@ class SupervisorAgent(BaseAgent):
     async def _handle_fetch_cve(self, keyword: str) -> None:
         """Fetch a CVE and cache the result in the DB."""
         from ghilliesuite_ex.utils.cve_fetcher import fetch_latest_cve
-        self.console.print(f"[cyan]🔍  Fetching CVE for: {keyword}[/cyan]")
+        self.console.print(f"[cyan]  Fetching CVE for: {keyword}[/cyan]")
         result = await fetch_latest_cve(keyword, db=self.db)
         self.console.print(
             f"  [bold]{result.cve_id}[/bold]  CVSS {result.cvss_score}  "
-            f"{result.description[:120]}…"
+            f"{result.description[:120]}..."
         )
         if result.poc_url:
             self.console.print(f"  [dim]PoC: {result.poc_url}[/dim]")

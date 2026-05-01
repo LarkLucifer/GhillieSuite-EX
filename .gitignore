@@ -48,3 +48,12 @@ env/
 .vscode/
 .idea/
 .DS_Store
+
+# ========================
+# Stray / bare git clones
+# ========================
+*.git/
+GhillieSuite-EX.git/
+replace.txt
+rewrite_email.py
+.mailmap
