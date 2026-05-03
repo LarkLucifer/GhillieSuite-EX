@@ -22,9 +22,49 @@ Design decisions:
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def _build_tool_env() -> dict[str, str]:
+    """
+    Build a subprocess environment that guarantees Go-installed security tools
+    are found even when GhillieSuite-EX is launched from a context that does
+    not source ~/.bashrc (e.g. desktop launcher, tmux, cron, or a different
+    user account whose .profile was not evaluated).
+
+    Strategy: prepend well-known Go binary directories to the existing PATH.
+    Only directories that actually exist are added to avoid stale entries.
+    The existing PATH is always preserved so system tools remain accessible.
+    """
+    env = os.environ.copy()
+    home = Path.home()
+
+    # Go binary install locations (in priority order)
+    go_bin_candidates = [
+        home / "go" / "bin",              # go install default: ~/go/bin
+        Path("/usr/local/go/bin"),         # manual Go toolchain install
+        Path("/usr/local/bin"),            # common homebrew / manual installs
+        Path("/opt/go/bin"),               # some distro layouts
+        Path("/snap/bin"),                 # snap-installed tools
+    ]
+
+    current_path = env.get("PATH", "")
+    extra = ":".join(
+        str(p) for p in go_bin_candidates
+        if p.is_dir() and str(p) not in current_path
+    )
+    if extra:
+        env["PATH"] = extra + ":" + current_path
+
+    return env
+
+
+# Build once at module load; shared across all tool invocations.
+# Re-evaluated on each import so it picks up the correct HOME.
+_TOOL_ENV: dict[str, str] = _build_tool_env()
 
 
 _EVASION_COOLDOWN_SECONDS = 60
@@ -107,6 +147,7 @@ async def run_tool(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=stdin_pipe,
+            env=_TOOL_ENV,
         )
 
         stdin_bytes = stdin_data.encode() if stdin_data else None
@@ -216,6 +257,7 @@ async def run_tool_to_file(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_TOOL_ENV,
         )
 
         try:
