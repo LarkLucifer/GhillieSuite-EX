@@ -35,6 +35,7 @@ from rich.rule import Rule
 from ghilliesuite_ex import __app_name__, __version__
 from ghilliesuite_ex.arsenal import check_binaries, collect_tooling_status
 from ghilliesuite_ex.config import normalize_execution_profile, validate_config
+from ghilliesuite_ex.safety import get_execution_safety_policy
 from ghilliesuite_ex.state.db import StateDB
 from ghilliesuite_ex.utils.scope import load_scope, validate_target_scope
 from ghilliesuite_ex.utils.ui import print_banner
@@ -471,23 +472,13 @@ async def _async_hunt(
     cfg.waf_evasion = bool(waf_evasion)
     cfg.output_dir = output_dir
     cfg.evidence_dir = evidence_dir
+    safety_policy = get_execution_safety_policy(cfg.execution_profile)
 
     console.print(
         "[bold cyan]Execution profile:[/bold cyan] "
-        f"[bold]{cfg.execution_profile}[/bold]"
+        f"[bold]{safety_policy.profile}[/bold]"
     )
-    if cfg.execution_profile == "vdp-safe":
-        console.print(
-            "[dim]  Passive and low-noise checks only. Broad exploitation and brute forcing stay disabled.[/dim]"
-        )
-    elif cfg.execution_profile == "balanced":
-        console.print(
-            "[dim]  Targeted exploitation plus advisory checks. Broad fuzzing remains constrained.[/dim]"
-        )
-    else:
-        console.print(
-            "[dim]  Full arsenal enabled, including broad fuzzing paths and aggressive exploit stages.[/dim]"
-        )
+    console.print(f"[dim]  {safety_policy.description}[/dim]")
     console.print()
 
     if force_exploit:
@@ -505,7 +496,7 @@ async def _async_hunt(
         )
         console.print()
 
-    if cfg.execution_profile != "aggressive" and force_exploit:
+    if force_exploit and not safety_policy.force_exploit_allowed:
         console.print(
             "[yellow]  force-exploit requested, but the active profile will still block broad exploit-only paths until aggressive mode is selected.[/yellow]"
         )
