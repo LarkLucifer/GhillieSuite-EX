@@ -164,6 +164,28 @@ GhillieSuite-EX.sec hunt \
 
 ---
 
+## Testing
+
+The canonical baseline test command is:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+If you installed the dev extra, you can still use `pytest` as a convenience wrapper, but `unittest discover` is the source-of-truth command for CI-style smoke validation because the suite is written in `unittest` style.
+
+Phase 0 / safe local validation commands:
+
+```bash
+python -m ghilliesuite_ex.main --help
+python -m ghilliesuite_ex.main version
+python -m ghilliesuite_ex.main check-tools
+python -m ghilliesuite_ex.main check-config
+python -m unittest discover -s tests -v
+```
+
+---
+
 ## CLI Reference
 
 ```
