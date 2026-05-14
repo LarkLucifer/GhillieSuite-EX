@@ -30,6 +30,14 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=False)
 _OPENAI_PREFIX = "sk-"
 _GEMINI_PREFIX = "AIza"
 VALID_EXECUTION_PROFILES = ("vdp-safe", "balanced", "aggressive")
+_PLACEHOLDER_PREFIXES = (
+    "your_",
+    "your-",
+    "replace_",
+    "replace-",
+    "example_",
+    "example-",
+)
 
 
 def normalize_execution_profile(value: str | None) -> str:
@@ -39,6 +47,33 @@ def normalize_execution_profile(value: str | None) -> str:
         allowed = ", ".join(VALID_EXECUTION_PROFILES)
         raise ValueError(f"Invalid execution profile '{value}'. Expected one of: {allowed}.")
     return profile
+
+
+def _looks_like_placeholder_secret(value: str) -> bool:
+    """
+    Return True when a configured key appears to be a copied example value
+    rather than a real secret.
+    """
+    cleaned = (value or "").strip()
+    if not cleaned:
+        return False
+
+    lowered = cleaned.lower()
+    if lowered in {
+        "sk-...",
+        "aizasy...",
+        "your-key-here",
+        "replace-me",
+        "replace_with_real_key",
+    }:
+        return True
+    if cleaned.endswith("..."):
+        return True
+    if "<" in cleaned or ">" in cleaned:
+        return True
+    if "changeme" in lowered:
+        return True
+    return lowered.startswith(_PLACEHOLDER_PREFIXES)
 
 
 def detect_ai_provider() -> tuple[str, str]:
@@ -459,6 +494,18 @@ def validate_config(ai_provider: str | None = None) -> str:
             "  GEMINI_API_KEY=AIza...         # for Google Gemini (auto-detected)\n\n"
             "Get a Gemini key free at: https://aistudio.google.com/app/apikey\n"
             "Get an OpenAI key at:     https://platform.openai.com/api-keys"
+        )
+
+    if resolved == "openai" and _looks_like_placeholder_secret(cfg.openai_api_key):
+        raise RuntimeError(
+            "OPENAI_API_KEY looks like a placeholder example, not a real secret.\n\n"
+            "Update .env with your actual OpenAI API key before running check-config or AI-assisted hunts."
+        )
+
+    if resolved == "gemini" and _looks_like_placeholder_secret(cfg.gemini_api_key):
+        raise RuntimeError(
+            "GEMINI_API_KEY looks like a placeholder example, not a real secret.\n\n"
+            "Update .env with your actual Gemini API key before running check-config or AI-assisted hunts."
         )
 
     # Warn if key doesn't match the expected prefix (manual override fallback)

@@ -51,4 +51,8 @@ where = ["."]
 include = ["ghilliesuite_ex*"]
 
 [tool.setuptools.package-data]
-"ghilliesuite_ex" = ["py.typed"]
+"ghilliesuite_ex" = [
+    "py.typed",
+    "resources/*.txt",
+    "templates/*.yaml",
+]

@@ -48,11 +48,30 @@ StateDB (SQLite @ ~/GhillieSuite-EX/ghilliesuite_state.db)
 ```bash
 git clone <repo>
 cd GhillieSuite-EX
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
 python3 -m pip install -e .
+
+# Contributor / local audit workflow
+# python3 -m pip install -e ".[dev]"
 
 # Optional: Katana headless mode for SPA targets (React/Vue/Next.js)
 # python3 -m pip install playwright && playwright install chromium
 ```
+
+On Windows PowerShell:
+
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
+```
+
+The supported Python entrypoints are:
+- `GhillieSuite-EX.sec ...` from the active virtual environment
+- `python -m ghilliesuite_ex.main ...` when you want to bypass PATH ambiguity
 
 ### 2. Configure
 
@@ -99,11 +118,26 @@ Other optional tooling:
 ### 4. Verify
 
 ```bash
+GhillieSuite-EX.sec version       # confirms the package installed correctly
+GhillieSuite-EX.sec --help        # confirms the CLI can import and render
 GhillieSuite-EX.sec check-tools   # shows which binaries are on PATH
 GhillieSuite-EX.sec check-config  # validates .env + detected AI provider
 ```
 
-### 5. Hunt
+`check-config` is expected to fail until you replace the blank `.env` values with a real API key.
+
+### 5. Safe Smoke Test
+
+These commands are safe and do not contact any target:
+
+```bash
+python -m ghilliesuite_ex.main version
+python -m ghilliesuite_ex.main --help
+python -m ghilliesuite_ex.main check-tools
+python -m ghilliesuite_ex.main check-config
+```
+
+### 6. Hunt
 
 ```bash
 # Unauthenticated
@@ -118,6 +152,15 @@ GhillieSuite-EX.sec hunt \
   --cookies 'session=abc123; csrf=xyz' \
   --header 'Authorization: Bearer eyJhbGci...'
 ```
+
+---
+
+## Runtime Notes
+
+- Use a virtual environment. A bare system Python will not be able to import the CLI unless you installed the package into that interpreter.
+- Python dependencies and external security binaries are separate concerns. `pip install -e .` installs the CLI; `check-tools` validates the Go/Python binaries such as `subfinder`, `katana`, and `nuclei`.
+- The package bundles its runtime assets from `ghilliesuite_ex/resources/` and `ghilliesuite_ex/templates/`, so editable installs and wheel installs use the same packaged data.
+- `check-config` validates real keys only. Copying `.env.example` without replacing the blank values is intentionally treated as an incomplete setup.
 
 ---
 
