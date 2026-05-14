@@ -162,6 +162,16 @@ def _passthrough(output: str, **kwargs) -> list[dict[str, Any]]:
     return [{"line": line} for line in output.splitlines() if line.strip()]
 
 
+def _load_output_text(output: str = "", output_path: Path | None = None) -> str:
+    """Read parser input from a tool output file when present, else use stdout."""
+    if output_path and output_path.exists():
+        try:
+            return output_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return output
+    return output
+
+
 # ── Recon Parsers ─────────────────────────────────────────────────────────────
 
 def parse_subfinder(output: str = "", output_path: Path | None = None) -> list[dict[str, Any]]:
@@ -172,13 +182,7 @@ def parse_subfinder(output: str = "", output_path: Path | None = None) -> list[d
     subfinder -silent -o produces one subdomain per line.
     Returns: [{"domain": str}, ...]
     """
-    if output_path and output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = output
-    else:
-        text = output
+    text = _load_output_text(output=output, output_path=output_path)
 
     results = []
     for line in text.splitlines():
@@ -198,13 +202,7 @@ def parse_httpx(output: str = "", output_path: Path | None = None) -> list[dict[
 
     Returns: [{"url", "status_code", "server", "title", "tech_stack", "ai_detected"}, ...]
     """
-    if output_path and output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = output
-    else:
-        text = output
+    text = _load_output_text(output=output, output_path=output_path)
 
     results = []
     for line in text.splitlines():
@@ -269,13 +267,7 @@ def parse_katana(output: str = "", output_path: Path | None = None, **kwargs) ->
 
     Returns: [{"url": str, "params": str, "method": str, "status_code": int, "source": str}, ...]
     """
-    if output_path and output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = output
-    else:
-        text = output
+    text = _load_output_text(output=output, output_path=output_path)
 
     seen: set[str] = set()
     results = []
@@ -488,13 +480,7 @@ def parse_ffuf(output: str = "", output_path: Path | None = None, **kwargs) -> l
 
     Returns: [{"url": str, "status": int, "length": int, "lines": int}, ...]
     """
-    if output_path and output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = output
-    else:
-        text = output
+    text = _load_output_text(output=output, output_path=output_path)
 
     if not text.strip():
         return []
@@ -572,13 +558,7 @@ def parse_dnsx(output: str = "", output_path: Path | None = None) -> list[dict[s
     Fallback: "domain ip" or "ip domain" per line.
     Returns: [{"domain": str, "ip": str}, ...]
     """
-    if output_path and output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = output
-    else:
-        text = output
+    text = _load_output_text(output=output, output_path=output_path)
 
     results: list[dict[str, Any]] = []
     for line in text.splitlines():
@@ -616,13 +596,7 @@ def parse_naabu(output: str = "", output_path: Path | None = None) -> list[dict[
     Fallback: "host:port" or "ip:port" per line.
     Returns: [{"host": str, "ip": str, "port": int, "proto": str}, ...]
     """
-    if output_path and output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = output
-    else:
-        text = output
+    text = _load_output_text(output=output, output_path=output_path)
 
     results: list[dict[str, Any]] = []
     for line in text.splitlines():
@@ -659,13 +633,7 @@ def parse_arjun(output: str = "", output_path: Path | None = None) -> list[dict[
     Fallback: line parsing of "URL: param1, param2".
     Returns: [{"url": str, "method": str, "params": list[str]}]
     """
-    if output_path and output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = output
-    else:
-        text = output
+    text = _load_output_text(output=output, output_path=output_path)
 
     results: list[dict[str, Any]] = []
     # Try JSON as full document first
@@ -731,13 +699,7 @@ def parse_subzy(output: str = "", output_path: Path | None = None) -> list[dict[
     Fallback: detect "VULNERABLE" lines.
     Returns: [{"domain": str, "status": str, "service": str, "vulnerable": bool}]
     """
-    if output_path and output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = output
-    else:
-        text = output
+    text = _load_output_text(output=output, output_path=output_path)
 
     results: list[dict[str, Any]] = []
     for line in text.splitlines():
@@ -770,13 +732,7 @@ def parse_gowitness(output: str = "", output_path: Path | None = None) -> list[d
     Parse gowitness JSON report if enabled.
     Returns: [{"url": str, "screenshot": str, "title": str, "status": int}]
     """
-    if output_path and output_path.exists():
-        try:
-            text = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            text = output
-    else:
-        text = output
+    text = _load_output_text(output=output, output_path=output_path)
 
     if not text.strip():
         return []

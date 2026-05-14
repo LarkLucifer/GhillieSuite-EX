@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from rich.status import Status
 
@@ -37,9 +36,15 @@ from ghilliesuite_ex.utils.parsers import (
     parse_arjun,
     parse_gowitness,
 )
-from ghilliesuite_ex.utils.scope import is_in_scope, scope_filter_domains, filter_in_scope
+from ghilliesuite_ex.utils.scope import is_in_scope, scope_filter_domains
 from ghilliesuite_ex.utils.ui import tool_result_panel
 
+from .recon_pipeline import (
+    build_httpx_targets,
+    build_katana_candidates,
+    select_arjun_targets,
+    select_katana_targets,
+)
 from .base import AgentResult, AgentTask, BaseAgent
 
 # Temp file locations for inter-tool data handoff
@@ -57,54 +62,6 @@ _NAABU_IN         = _TMP_DIR / "naabu_in.txt"
 _NAABU_OUT        = _TMP_DIR / "naabu_out.json"
 _SUBZY_IN         = _TMP_DIR / "subzy_in.txt"
 _SUBZY_OUT        = _TMP_DIR / "subzy_out.json"
-
-_ARJUN_STATIC_EXTS = (
-    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp",
-    ".css", ".js", ".map",
-    ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    ".ico", ".pdf", ".zip", ".tar", ".gz", ".rar", ".7z",
-    ".mp4", ".mp3", ".avi", ".mov", ".mkv",
-)
-_ARJUN_SEO_PATHS = ("/page/", "/wp-content/", "/author/", "/tag/", "/category/")
-_ARJUN_PRIORITY_MARKERS = (".php", ".aspx", "/api/")
-
-
-def _is_arjun_priority(url: str) -> bool:
-    path = urlsplit(url).path.lower()
-    return any(marker in path for marker in _ARJUN_PRIORITY_MARKERS)
-
-
-def _is_arjun_candidate(url: str) -> bool:
-    path = urlsplit(url).path.lower()
-    if not path:
-        return False
-    if any(path.endswith(ext) for ext in _ARJUN_STATIC_EXTS):
-        return False
-    if not _is_arjun_priority(url):
-        if any(seg in path for seg in _ARJUN_SEO_PATHS):
-            return False
-        if path.endswith("/"):
-            return False
-    return True
-
-
-def _get_arjun_base_path(url: str) -> str:
-    """Extract unique base path for Blitz deduplication."""
-    parts = urlsplit(url)
-    path = parts.path
-    if not path or path == "/":
-        return f"{parts.scheme}://{parts.netloc}/"
-    
-    # Remove last segment if it looks like a resource or ID
-    segments = [s for s in path.split("/") if s]
-    if segments:
-        last = segments[-1]
-        if "." in last or len(last) > 20: # skip filenames or long IDs
-            segments = segments[:-1]
-            
-    base_path = "/".join(segments)
-    return f"{parts.scheme}://{parts.netloc}/{base_path}"
-
 
 class ReconAgent(BaseAgent):
     """
@@ -183,13 +140,7 @@ class ReconAgent(BaseAgent):
             live_count = 0
             live_urls: list[str] = []
             new_endpoints: list[str] = []
-            httpx_targets: list[str] = []
-            for domain in subdomains:
-                httpx_targets.append(f"http://{domain}")
-                httpx_targets.append(f"https://{domain}")
-
-            httpx_targets = filter_in_scope(httpx_targets, self.scope)
-            httpx_targets = list(dict.fromkeys(httpx_targets))
+            httpx_targets = build_httpx_targets(subdomains, self.scope)
             httpx_delta = [url for url in httpx_targets if url not in httpx_history]
 
             if httpx_delta:
@@ -304,29 +255,13 @@ class ReconAgent(BaseAgent):
             else:
                 live_hosts = await self.db.get_hosts(self.scope)
                 host_by_domain = {h.domain: h for h in live_hosts}
-                katana_candidates: list[str] = []
-                for url in live_urls:
-                    base = url.split("#")[0].split("?")[0]
-                    parts = base.split("/")
-                    base = "/".join(parts[:3]) if len(parts) >= 3 else base
-                    if base:
-                        katana_candidates.append(base)
-                katana_candidates = list(dict.fromkeys(katana_candidates))
+                katana_candidates = build_katana_candidates(live_urls)
                 try:
                     recrawl_interval = max(1, int(getattr(self.cfg, "katana_recrawl_interval", 3)))
                 except Exception:
                     recrawl_interval = 3
 
-                katana_delta: list[str] = []
-                for url_target in katana_candidates:
-                    if url_target not in katana_history:
-                        katana_delta.append(url_target)
-                        continue
-                    last_run = int(katana_last_crawl_run.get(url_target, 0) or 0)
-                    if (recon_run_count - last_run) >= recrawl_interval:
-                        katana_delta.append(url_target)
-
-                if katana_delta:
+                if katana_candidates:
                     # Determine max concurrent targets - turbo mode doubles the limit
                     try:
                         from ghilliesuite_ex.config import cfg as _cfg
@@ -336,10 +271,21 @@ class ReconAgent(BaseAgent):
                     except Exception:
                         _max_t = 10
 
-                    targets_to_crawl = katana_delta[:_max_t]
+                    targets_to_crawl = select_katana_targets(
+                        katana_candidates,
+                        history=katana_history,
+                        last_crawl_run=katana_last_crawl_run,
+                        recon_run_count=recon_run_count,
+                        recrawl_interval=recrawl_interval,
+                        max_targets=_max_t,
+                    )
+                else:
+                    targets_to_crawl = []
+
+                if targets_to_crawl:
                     self.console.print(
                         f"[cyan]  Phase 3 - katana crawling {len(targets_to_crawl)} target(s) "
-                        f"concurrently (max={_max_t}, delta={len(katana_delta)})[/cyan]"
+                        f"concurrently (max={_max_t}, delta={len(targets_to_crawl)})[/cyan]"
                     )
 
                     _sem = asyncio.Semaphore(_max_t)
@@ -455,22 +401,12 @@ class ReconAgent(BaseAgent):
 
             # Phase 5: arjun (delta-only, existing add-on)
             arjun_urls_added = 0
-            raw_targets = [u for u in new_endpoints if u and u not in arjun_history]
-            raw_targets = [u for u in raw_targets if is_in_scope(u, self.scope)]
-            filtered_targets = [u for u in raw_targets if _is_arjun_candidate(u)]
-            filtered_targets = list(dict.fromkeys(filtered_targets))
-            # Arjun Blitz Deduplication: Group by base path
-            seen_bases: set[str] = set()
-            blitz_targets = []
-            for u in filtered_targets:
-                base = _get_arjun_base_path(u)
-                if base not in seen_bases:
-                    seen_bases.add(base)
-                    blitz_targets.append(u)
-        
-            priority_targets = [u for u in blitz_targets if _is_arjun_priority(u)]
-            other_targets = [u for u in blitz_targets if u not in priority_targets]
-            arjun_targets = (priority_targets + other_targets)[:20] # Increased cap for Blitz
+            arjun_targets = select_arjun_targets(
+                new_endpoints,
+                history=arjun_history,
+                scope=self.scope,
+                limit=20,
+            )
             if arjun_targets:
                 self.console.print("[cyan]  Phase 5 - arjun parameter discovery[/cyan]")
                 _ARJUN_IN.write_text("\n".join(arjun_targets) + "\n", encoding="utf-8")
@@ -805,4 +741,3 @@ class ReconAgent(BaseAgent):
             ),
             items_added=items_added,
         )
-

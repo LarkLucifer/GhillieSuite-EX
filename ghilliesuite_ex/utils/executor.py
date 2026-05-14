@@ -241,6 +241,10 @@ async def run_tool_to_file(
 
     # Ensure parent directory exists
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        output_path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
     # Global Evasion Cooldown Check — sleep OUTSIDE lock to avoid blocking other tools
     wait_needed = 0.0
@@ -278,8 +282,14 @@ async def run_tool_to_file(
         stdout_text = stdout_raw[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
         stderr_text = stderr_raw[:MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
 
-        # Verify that the tool actually wrote the output file
-        resolved_output = output_path if output_path.exists() and output_path.stat().st_size > 0 else None
+        # Verify that the tool actually wrote a fresh, non-empty output file.
+        resolved_output = None
+        if output_path.exists():
+            try:
+                if output_path.stat().st_size > 0:
+                    resolved_output = output_path.resolve()
+            except OSError:
+                resolved_output = None
 
         res = ToolResult(
             stdout=stdout_text,
