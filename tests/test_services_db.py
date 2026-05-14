@@ -44,14 +44,19 @@ class TestServicesDB(unittest.IsolatedAsyncioTestCase):
             db_path = tmp_dir / "state.db"
             async with StateDB(str(db_path), target="alpha.example.com") as db:
                 await db.insert_host(Host(domain="alpha.example.com"))
+                self.assertEqual(db.target_session.active_target, "alpha.example.com")
+                self.assertFalse(db.target_session.data_reset)
 
             async with StateDB(str(db_path), target="alpha.example.com") as db:
                 hosts = await db.get_hosts()
                 self.assertEqual([host.domain for host in hosts], ["alpha.example.com"])
+                self.assertFalse(db.target_session.data_reset)
 
             async with StateDB(str(db_path), target="beta.example.com") as db:
                 hosts = await db.get_hosts()
                 self.assertEqual(hosts, [])
+                self.assertTrue(db.target_session.data_reset)
+                self.assertEqual(db.target_session.stored_target_before, "alpha.example.com")
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 

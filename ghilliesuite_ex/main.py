@@ -425,7 +425,7 @@ async def _async_hunt(
     turbo: bool = False,
 ) -> bool:
     """Async implementation of the hunt command.  Returns True on success, False on fatal preflight failure."""
-    from ghilliesuite_ex.config import cfg, validate_config
+    from ghilliesuite_ex.config import RuntimeConfigOverrides, cfg, validate_config
     from ghilliesuite_ex.agents.supervisor import SupervisorAgent
     from ghilliesuite_ex.agents.base import AgentTask
     from ghilliesuite_ex.utils.nuclei import update_nuclei_templates
@@ -454,24 +454,46 @@ async def _async_hunt(
     # These are set here (not in Config.__init__) because they are per-session
     # CLI values, not environment variables.
     try:
-        cfg.set_execution_profile(normalize_execution_profile(profile))
+        normalized_profile = normalize_execution_profile(profile)
     except ValueError as exc:
         console.print(f"[bold red]Profile error:[/bold red] {exc}")
         return False  # B-03: propagate failure via return value, not typer.Exit inside a coroutine
 
-    if cookie:
-        cfg.auth_cookie = cookie.strip()
-    if header:
-        cfg.auth_header = header.strip()
-    if proxy:
-        cfg.proxy = proxy.strip()
-
-    cfg.enable_screenshots = bool(screenshots)
-    cfg.ai_planner = bool(ai_planner)
-    cfg.force_exploit = bool(force_exploit)
-    cfg.waf_evasion = bool(waf_evasion)
-    cfg.output_dir = output_dir
-    cfg.evidence_dir = evidence_dir
+    cfg.apply_runtime_overrides(
+        RuntimeConfigOverrides(
+            execution_profile=normalized_profile,
+            auth_cookie=cookie if cookie is not None else "",
+            auth_header=header if header is not None else "",
+            proxy=proxy if proxy is not None else cfg.proxy,
+            enable_screenshots=bool(screenshots),
+            ai_planner=bool(ai_planner),
+            force_exploit=bool(force_exploit),
+            waf_evasion=bool(waf_evasion),
+            output_dir=output_dir,
+            evidence_dir=evidence_dir,
+            allow_redirects=bool(allow_redirects),
+            stealth_mode=bool(stealth),
+            disable_stealth=bool(disable_stealth),
+            nuclei_timeout=nuclei_timeout,
+            fast_nuclei=bool(fast_nuclei) if fast_nuclei is not None else None,
+            nuclei_rate_limit=nuclei_rate_limit,
+            nuclei_concurrency=nuclei_concurrency,
+            nuclei_http_timeout=nuclei_http_timeout,
+            js_max_workers=js_workers,
+            js_max_files=js_max_files,
+            js_llm_concurrency=llm_concurrency,
+            js_snippet_max_len=js_snippet_len,
+            js_http_timeout=js_http_timeout,
+            js_llm_timeout=js_llm_timeout,
+            recon_enable_dnsx=bool(recon_dnsx) if recon_dnsx is not None else None,
+            recon_enable_naabu=bool(recon_naabu) if recon_naabu is not None else None,
+            recon_enable_subzy=bool(recon_subzy) if recon_subzy is not None else None,
+            turbo_mode=bool(turbo),
+            force_auto=bool(force_auto),
+            max_agent_loops=max_loops,
+            default_timeout=timeout,
+        )
+    )
     safety_policy = get_execution_safety_policy(cfg.execution_profile)
 
     console.print(
@@ -506,59 +528,22 @@ async def _async_hunt(
         )
 
     if allow_redirects:
-        cfg.allow_redirects = True
         console.print("[bold yellow]Redirects enabled[/bold yellow]  [dim]— httpx will follow redirects[/dim]")
 
     if stealth:
-        cfg.stealth_mode = True
         console.print("[bold yellow]Stealth mode enabled[/bold yellow]  [dim]— lower request rate & concurrency[/dim]")
 
     if disable_stealth:
-        cfg.disable_stealth = True
         if cfg.stealth_mode:
             console.print(
                 "[bold yellow]Stealth override disabled[/bold yellow]  "
                 "[dim]— --disable-stealth overrides --stealth[/dim]"
             )
-        cfg.stealth_mode = False
         console.print(
             "[bold yellow]Sniper protocol disabled[/bold yellow]  "
             "[dim]— WAF signals will not reduce execution[/dim]"
         )
 
-    if nuclei_timeout is not None:
-        cfg.nuclei_timeout = nuclei_timeout
-
-    if fast_nuclei is not None:
-        cfg.fast_nuclei = bool(fast_nuclei)
-    if nuclei_rate_limit is not None:
-        cfg.nuclei_rate_limit = nuclei_rate_limit
-    if nuclei_concurrency is not None:
-        cfg.nuclei_concurrency = nuclei_concurrency
-    if nuclei_http_timeout is not None:
-        cfg.nuclei_http_timeout = nuclei_http_timeout
-
-    if js_workers is not None:
-        cfg.js_max_workers = js_workers
-    if js_max_files is not None:
-        cfg.js_max_files = js_max_files
-    if llm_concurrency is not None:
-        cfg.js_llm_concurrency = llm_concurrency
-    if js_snippet_len is not None:
-        cfg.js_snippet_max_len = js_snippet_len
-    if js_http_timeout is not None:
-        cfg.js_http_timeout = js_http_timeout
-    if js_llm_timeout is not None:
-        cfg.js_llm_timeout = js_llm_timeout
-
-    if recon_dnsx is not None:
-        cfg.recon_enable_dnsx = bool(recon_dnsx)
-    if recon_naabu is not None:
-        cfg.recon_enable_naabu = bool(recon_naabu)
-    if recon_subzy is not None:
-        cfg.recon_enable_subzy = bool(recon_subzy)
-
-    cfg.turbo_mode = turbo
 
     if turbo:
         console.print("[bold red]TURBO MODE ACTIVE[/bold red] [dim]— bypassing safe limits for high-speed scanning[/dim]")
@@ -595,7 +580,6 @@ async def _async_hunt(
 
     # ── Force-auto mode ────────────────────────────────────────────────────
     if force_auto:
-        cfg.force_auto = True
         console.print(
             "[bold red]⚠️  FORCE-AUTO MODE ACTIVE — All HitL prompts bypassed.[/bold red]\n"
             "[dim]   dalfox, sqlmap, and ffuf SSRF will fire without confirmation.\n"
@@ -659,8 +643,6 @@ async def _async_hunt(
     console.print()
     console.print(Rule("[bold]Starting agent swarm[/bold]", style="bright_magenta"))
 
-    cfg.max_agent_loops = max_loops
-    cfg.default_timeout = timeout
 
     # Ensure the DB directory exists (for the hardcoded ~/GhillieSuite-EX/ path)
     import os as _os

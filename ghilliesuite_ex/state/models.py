@@ -94,3 +94,13 @@ class Screenshot:
     source_tool: str = "gowitness"
     captured_at: str = field(default_factory=_utc_now_iso)
     id: int | None = None
+
+
+@dataclass(frozen=True)
+class TargetSession:
+    """Tracks which target a StateDB instance is currently isolated for."""
+
+    requested_target: str | None
+    stored_target_before: str | None
+    active_target: str | None
+    data_reset: bool = False

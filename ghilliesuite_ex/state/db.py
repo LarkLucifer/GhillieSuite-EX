@@ -26,7 +26,7 @@ from pathlib import Path
 import aiosqlite
 from ghilliesuite_ex.utils.scope import is_in_scope
 
-from .models import CVEResult, Endpoint, Finding, Host, Service, Screenshot
+from .models import CVEResult, Endpoint, Finding, Host, Service, Screenshot, TargetSession
 
 # ── DDL ───────────────────────────────────────────────────────────────────────
 SCHEMA_SQL = """
@@ -118,6 +118,12 @@ class StateDB:
         self._path = db_path
         self._target = target
         self._conn: aiosqlite.Connection | None = None
+        self._target_session = TargetSession(
+            requested_target=target,
+            stored_target_before=None,
+            active_target=target,
+            data_reset=False,
+        )
 
     # ── Context manager ───────────────────────────────────────────────────────
 
@@ -130,31 +136,7 @@ class StateDB:
         # ── Target-change detection ───────────────────────────────────────────
         # If the caller supplies a target and it differs from the stored one,
         # wipe all per-target data so old scan results never contaminate a new hunt.
-        if self._target is not None:
-            row = await (await self._conn.execute(
-                "SELECT value FROM meta WHERE key = 'target'"
-            )).fetchone()
-            stored_target = row["value"] if row else None
-
-            if stored_target != self._target:
-                # Drop and recreate all data tables
-                drop_sql = "\n".join(
-                    f"DROP TABLE IF EXISTS {t};" for t in _DATA_TABLES
-                )
-                await self._conn.executescript(drop_sql)
-                await self._conn.executescript(SCHEMA_SQL)
-                # Persist the new target
-                await self._conn.execute(
-                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('target', ?)",
-                    (self._target,),
-                )
-                await self._conn.commit()
-            elif stored_target is None:
-                await self._conn.execute(
-                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('target', ?)",
-                    (self._target,),
-                )
-                await self._conn.commit()
+        self._target_session = await self._ensure_target_session()
 
         return self
 
@@ -169,6 +151,51 @@ class StateDB:
         if self._conn is None:
             raise RuntimeError("StateDB must be used as an async context manager.")
         return self._conn
+
+    @property
+    def target_session(self) -> TargetSession:
+        """Return target-isolation metadata for the current DB context."""
+        return self._target_session
+
+    async def _ensure_target_session(self) -> TargetSession:
+        """
+        Centralize target-isolation behavior and expose its outcome explicitly.
+        """
+        row = await (
+            await self._db.execute("SELECT value FROM meta WHERE key = 'target'")
+        ).fetchone()
+        stored_target = row["value"] if row else None
+
+        if self._target is None:
+            return TargetSession(
+                requested_target=None,
+                stored_target_before=stored_target,
+                active_target=stored_target,
+                data_reset=False,
+            )
+
+        reset_applied = False
+        if stored_target != self._target:
+            if stored_target is not None:
+                drop_sql = "\n".join(
+                    f"DROP TABLE IF EXISTS {table};" for table in _DATA_TABLES
+                )
+                await self._conn.executescript(drop_sql)
+                await self._conn.executescript(SCHEMA_SQL)
+                reset_applied = True
+
+            await self._conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('target', ?)",
+                (self._target,),
+            )
+            await self._conn.commit()
+
+        return TargetSession(
+            requested_target=self._target,
+            stored_target_before=stored_target,
+            active_target=self._target,
+            data_reset=reset_applied,
+        )
 
     # ── Hosts ─────────────────────────────────────────────────────────────────
 

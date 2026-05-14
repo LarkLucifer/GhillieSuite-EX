@@ -115,6 +115,43 @@ def detect_ai_provider() -> tuple[str, str]:
 
 
 # ── Config dataclass populated from env ────────────────────────────────────────
+@dataclass(frozen=True)
+class RuntimeConfigOverrides:
+    """Runtime-only settings applied by the CLI on top of env-backed config."""
+
+    execution_profile: str | None = None
+    auth_cookie: str | None = None
+    auth_header: str | None = None
+    proxy: str | None = None
+    enable_screenshots: bool | None = None
+    ai_planner: bool | None = None
+    force_exploit: bool | None = None
+    waf_evasion: bool | None = None
+    output_dir: str | None = None
+    evidence_dir: str | None = None
+    allow_redirects: bool | None = None
+    stealth_mode: bool | None = None
+    disable_stealth: bool | None = None
+    nuclei_timeout: int | None = None
+    fast_nuclei: bool | None = None
+    nuclei_rate_limit: int | None = None
+    nuclei_concurrency: int | None = None
+    nuclei_http_timeout: int | None = None
+    js_max_workers: int | None = None
+    js_max_files: int | None = None
+    js_llm_concurrency: int | None = None
+    js_snippet_max_len: int | None = None
+    js_http_timeout: float | None = None
+    js_llm_timeout: float | None = None
+    recon_enable_dnsx: bool | None = None
+    recon_enable_naabu: bool | None = None
+    recon_enable_subzy: bool | None = None
+    turbo_mode: bool | None = None
+    force_auto: bool | None = None
+    max_agent_loops: int | None = None
+    default_timeout: int | None = None
+
+
 @dataclass
 class Config:
     # ── Raw keys (both loaded; detect_ai_provider() picks the winner)
@@ -420,6 +457,7 @@ class Config:
     Enables WAF-evasion runtime hardening (request spoofing and FFUF hardening).
     Mutation probe stages are removed.
     """
+    _runtime_defaults: dict[str, object] = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         """Run auto-detection immediately after the dataclass is initialised."""
@@ -429,10 +467,97 @@ class Config:
             self.enable_ai()
         else:
             self.disable_ai("No AI provider API key configured.")
+        self._capture_runtime_defaults()
 
     def set_execution_profile(self, profile: str) -> None:
         """Update the execution profile after CLI parsing."""
         self.execution_profile = normalize_execution_profile(profile)
+
+    def _capture_runtime_defaults(self) -> None:
+        self._runtime_defaults = {
+            "execution_profile": self.execution_profile,
+            "auth_cookie": self.auth_cookie,
+            "auth_header": self.auth_header,
+            "proxy": self.proxy,
+            "enable_screenshots": self.enable_screenshots,
+            "ai_planner": self.ai_planner,
+            "force_exploit": self.force_exploit,
+            "waf_evasion": self.waf_evasion,
+            "output_dir": self.output_dir,
+            "evidence_dir": self.evidence_dir,
+            "allow_redirects": self.allow_redirects,
+            "stealth_mode": self.stealth_mode,
+            "disable_stealth": self.disable_stealth,
+            "nuclei_timeout": self.nuclei_timeout,
+            "fast_nuclei": self.fast_nuclei,
+            "nuclei_rate_limit": self.nuclei_rate_limit,
+            "nuclei_concurrency": self.nuclei_concurrency,
+            "nuclei_http_timeout": self.nuclei_http_timeout,
+            "js_max_workers": self.js_max_workers,
+            "js_max_files": self.js_max_files,
+            "js_llm_concurrency": self.js_llm_concurrency,
+            "js_snippet_max_len": self.js_snippet_max_len,
+            "js_http_timeout": self.js_http_timeout,
+            "js_llm_timeout": self.js_llm_timeout,
+            "recon_enable_dnsx": self.recon_enable_dnsx,
+            "recon_enable_naabu": self.recon_enable_naabu,
+            "recon_enable_subzy": self.recon_enable_subzy,
+            "turbo_mode": self.turbo_mode,
+            "force_auto": self.force_auto,
+            "max_agent_loops": self.max_agent_loops,
+            "default_timeout": self.default_timeout,
+        }
+
+    def reset_runtime_overrides(self) -> None:
+        """Restore runtime-mutated settings to their env-backed defaults."""
+        for field_name, value in self._runtime_defaults.items():
+            setattr(self, field_name, value)
+
+    def apply_runtime_overrides(self, overrides: RuntimeConfigOverrides) -> None:
+        """Apply CLI/runtime overrides in one explicit place."""
+        self.reset_runtime_overrides()
+
+        if overrides.execution_profile is not None:
+            self.set_execution_profile(overrides.execution_profile)
+        if overrides.auth_cookie is not None:
+            self.auth_cookie = overrides.auth_cookie.strip()
+        if overrides.auth_header is not None:
+            self.auth_header = overrides.auth_header.strip()
+        if overrides.proxy is not None:
+            self.proxy = overrides.proxy.strip()
+
+        for field_name in (
+            "enable_screenshots",
+            "ai_planner",
+            "force_exploit",
+            "waf_evasion",
+            "output_dir",
+            "evidence_dir",
+            "allow_redirects",
+            "stealth_mode",
+            "disable_stealth",
+            "nuclei_timeout",
+            "fast_nuclei",
+            "nuclei_rate_limit",
+            "nuclei_concurrency",
+            "nuclei_http_timeout",
+            "js_max_workers",
+            "js_max_files",
+            "js_llm_concurrency",
+            "js_snippet_max_len",
+            "js_http_timeout",
+            "js_llm_timeout",
+            "recon_enable_dnsx",
+            "recon_enable_naabu",
+            "recon_enable_subzy",
+            "turbo_mode",
+            "force_auto",
+            "max_agent_loops",
+            "default_timeout",
+        ):
+            value = getattr(overrides, field_name)
+            if value is not None:
+                setattr(self, field_name, value)
 
     def enable_ai(self) -> None:
         """Mark AI triage as available for this run."""
