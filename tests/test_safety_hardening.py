@@ -708,6 +708,7 @@ class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(any(path.suffix == ".json" for path in report_files))
             self.assertTrue(any(path.suffix == ".md" for path in report_files))
             self.assertTrue(any(path.suffix == ".html" for path in report_files))
+            self.assertFalse(any(path.name.endswith("_bounty_draft.txt") for path in report_files))
 
             for path in report_files:
                 content = path.read_text(encoding="utf-8", errors="replace")
@@ -717,6 +718,9 @@ class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("bearersecret123456789", content)
                 self.assertNotIn("sk-abcdefghijklmnopQRSTUV1234567890", content)
                 self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz1234567890", content)
+                if path.suffix == ".html":
+                    self.assertNotIn("cdn.tailwindcss.com", content)
+                    self.assertNotIn("fonts.googleapis.com", content)
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)
 
@@ -746,5 +750,47 @@ class TestReporterSafety(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(report_data["scope"]["entries"], ["example.com", "exclude:admin.example.com"])
             self.assertEqual(report_data["scope"]["rules"][0]["kind"], "host_exact")
             self.assertEqual(report_data["scope"]["rules"][1]["include"], False)
+        finally:
+            shutil.rmtree(tmp_path, ignore_errors=True)
+
+    async def test_bounty_draft_is_generated_only_when_enabled(self) -> None:
+        console = Console(file=io.StringIO(), force_terminal=False, color_system=None)
+        tmp_path = Path("tmp") / f"reporter_draft_{uuid4().hex}"
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        try:
+            config = Config()
+            config.disable_ai("No API key configured.")
+            config.output_dir = str(tmp_path)
+            config.generate_bounty_draft = True
+
+            async with StateDB(":memory:", target="example.com") as db:
+                await db.insert_host(Host(domain="example.com", status_code=200, tech_stack="nginx"))
+                await db.insert_finding(
+                    Finding(
+                        tool="sqlmap",
+                        target="https://example.com/api/users?id=1",
+                        severity="high",
+                        title="SQL Injection",
+                        evidence="Authorization: Bearer hiddensecret123",
+                        reproducible_steps="Replay the request against the vulnerable parameter.",
+                        raw_output="token=ghp_secretshouldberedacted",
+                    )
+                )
+
+                reporter = ReporterAgent(
+                    db=db,
+                    ai_client=None,
+                    scope=["example.com"],
+                    console=console,
+                    config=config,
+                )
+                await reporter.run(AgentTask(target="example.com"))
+
+            draft_files = list(tmp_path.glob("*_bounty_draft.txt"))
+            self.assertEqual(len(draft_files), 1)
+            draft_content = draft_files[0].read_text(encoding="utf-8")
+            self.assertIn("SQL Injection", draft_content)
+            self.assertNotIn("hiddensecret123", draft_content)
+            self.assertNotIn("ghp_secretshouldberedacted", draft_content)
         finally:
             shutil.rmtree(tmp_path, ignore_errors=True)

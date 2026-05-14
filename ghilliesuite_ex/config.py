@@ -382,6 +382,12 @@ class Config:
     evidence_dir: str = "evidence"
     """Directory where request/response evidence files are stored."""
 
+    generate_bounty_draft: bool = field(
+        default_factory=lambda: os.getenv("GENERATE_BOUNTY_DRAFT", "0").strip().lower()
+        in ("1", "true", "yes", "on")
+    )
+    """If True, generate a disclosure draft for high/critical findings."""
+
     @property
     def auth_headers_flags(self) -> list[str]:
         """

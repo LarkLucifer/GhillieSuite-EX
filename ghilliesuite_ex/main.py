@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import io
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -37,6 +38,11 @@ from ghilliesuite_ex.arsenal import check_binaries, collect_tooling_status
 from ghilliesuite_ex.config import normalize_execution_profile, validate_config
 from ghilliesuite_ex.safety import get_execution_safety_policy
 from ghilliesuite_ex.state.db import StateDB
+from ghilliesuite_ex.utils.run_metadata import (
+    build_run_manifest,
+    safe_run_slug,
+    write_run_manifest,
+)
 from ghilliesuite_ex.utils.scope import load_scope, validate_target_scope
 from ghilliesuite_ex.utils.ui import print_banner
 
@@ -430,6 +436,73 @@ async def _async_hunt(
     from ghilliesuite_ex.agents.base import AgentTask
     from ghilliesuite_ex.utils.nuclei import update_nuclei_templates
 
+    started_at = datetime.now(timezone.utc)
+    run_slug = safe_run_slug(target, started_at)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    failure_stage = ""
+    counts: dict[str, int] = {}
+    tooling_manifest: dict[str, object] = {}
+    target_session_manifest: dict[str, object] = {}
+    scope_domains: list[str] = []
+
+    def _runtime_flags_snapshot() -> dict[str, object]:
+        return {
+            "safe_mode": bool(safe_mode),
+            "stealth": bool(stealth),
+            "disable_stealth": bool(disable_stealth),
+            "allow_redirects": bool(allow_redirects),
+            "screenshots": bool(screenshots),
+            "ai_planner": bool(ai_planner),
+            "force_auto": bool(force_auto),
+            "force_exploit": bool(force_exploit),
+            "waf_evasion": bool(waf_evasion),
+            "turbo": bool(turbo),
+            "update_templates": bool(update_templates),
+            "generate_bounty_draft": bool(getattr(cfg, "generate_bounty_draft", False)),
+            "max_loops": max_loops,
+            "timeout": timeout,
+            "nuclei_timeout": nuclei_timeout,
+            "nuclei_rate_limit": nuclei_rate_limit,
+            "nuclei_concurrency": nuclei_concurrency,
+            "nuclei_http_timeout": nuclei_http_timeout,
+            "js_workers": js_workers,
+            "js_max_files": js_max_files,
+            "llm_concurrency": llm_concurrency,
+            "js_snippet_len": js_snippet_len,
+            "js_http_timeout": js_http_timeout,
+            "js_llm_timeout": js_llm_timeout,
+            "recon_dnsx": recon_dnsx,
+            "recon_naabu": recon_naabu,
+            "recon_subzy": recon_subzy,
+        }
+
+    def _write_manifest(status: str, summary: str) -> None:
+        finished_at = datetime.now(timezone.utc)
+        manifest = build_run_manifest(
+            target=target,
+            scope=scope_domains,
+            started_at=started_at,
+            finished_at=finished_at,
+            status=status,
+            summary=summary,
+            execution_profile=getattr(cfg, "execution_profile", str(profile)),
+            ai_enabled=bool(getattr(cfg, "ai_enabled", False)),
+            ai_provider=getattr(cfg, "ai_provider", "none"),
+            ai_status_message=getattr(cfg, "ai_status_message", "AI triage disabled"),
+            ai_disabled_reason=getattr(cfg, "ai_disabled_reason", ""),
+            output_dir=str(output_path.resolve()),
+            evidence_dir=str(Path(evidence_dir).resolve()),
+            db_path=getattr(cfg, "db_path", ""),
+            runtime_flags=_runtime_flags_snapshot(),
+            tooling=tooling_manifest,
+            counts=counts,
+            failure_stage=failure_stage or None,
+            target_session=target_session_manifest,
+        )
+        manifest_path = write_run_manifest(output_path, run_slug, manifest)
+        console.print(f"[dim]Run manifest: {manifest_path.resolve()}[/dim]")
+
     # ── Banner ─────────────────────────────────────────────────────────────
     print_banner(console)
 
@@ -457,6 +530,8 @@ async def _async_hunt(
         normalized_profile = normalize_execution_profile(profile)
     except ValueError as exc:
         console.print(f"[bold red]Profile error:[/bold red] {exc}")
+        failure_stage = "profile_validation"
+        _write_manifest("preflight_failed", str(exc))
         return False  # B-03: propagate failure via return value, not typer.Exit inside a coroutine
 
     cfg.apply_runtime_overrides(
@@ -592,6 +667,8 @@ async def _async_hunt(
         scope_domains = load_scope(scope_input)
     except (ValueError, FileNotFoundError) as exc:
         console.print(f"[bold red]Scope error:[/bold red] {exc}")
+        failure_stage = "scope_load"
+        _write_manifest("preflight_failed", str(exc))
         return False  # B-03
 
     console.print(f"[green]✔[/green] Scope loaded: {', '.join(scope_domains)}")
@@ -606,6 +683,8 @@ async def _async_hunt(
             f"   Scope: {', '.join(scope_domains)}\n"
             "   Adjust the target or scope rules and retry."
         )
+        failure_stage = "scope_preflight"
+        _write_manifest("preflight_failed", str(exc))
         return False  # B-03
 
     # ── Binary availability check ──────────────────────────────────────────
@@ -613,11 +692,23 @@ async def _async_hunt(
     results = check_binaries(console, profile=cfg.execution_profile)
     tooling_status = collect_tooling_status(profile=cfg.execution_profile)
     missing = [name for name in tooling_status.required_tools if not results.get(name)]
+    tooling_manifest = {
+        "required_missing": missing,
+        "optional_missing": [
+            name for name in tooling_status.optional_tools if not results.get(name)
+        ],
+        "optional_dependencies_missing": [
+            dep.name for dep in tooling_status.optional_dependencies if not dep.installed
+        ],
+        "disabled_by_profile": list(tooling_status.disabled_by_profile),
+    }
     if missing:
         console.print(
             f"\n[bold red]Missing required recon tools:[/bold red] {', '.join(missing)}\n"
             "Install them and ensure they are on your PATH, then re-run the hunt."
         )
+        failure_stage = "tool_preflight"
+        _write_manifest("preflight_failed", f"Missing required recon tools: {', '.join(missing)}")
         return False  # B-03
 
     # ── Nuclei template update (runs before hunting starts) ──────────────
@@ -652,6 +743,13 @@ async def _async_hunt(
 
     result_summary = "Pipeline terminated early — see error log above."
     async with StateDB(cfg.db_path, target=target) as db:
+        target_session = db.target_session
+        target_session_manifest = {
+            "requested_target": target_session.requested_target,
+            "stored_target_before": target_session.stored_target_before,
+            "active_target": target_session.active_target,
+            "data_reset": target_session.data_reset,
+        }
         supervisor = SupervisorAgent(
             db=db,
             ai_client=ai_client,
@@ -668,13 +766,26 @@ async def _async_hunt(
             result = await supervisor.run(task)
             result_summary = result.summary
         except Exception as _agent_exc:
+            failure_stage = "agent_runtime"
             console.print(
                 f"\n[bold red]⚠ Agent swarm encountered an unhandled error:[/bold red]\n"
                 f"  [red]{_agent_exc}[/red]\n"
                 f"[dim]Continuing to report generation with findings collected so far.[/dim]"
             )
+            result_summary = (
+                f"Agent swarm encountered an unhandled error but preserved partial results: {_agent_exc}"
+            )
+
+        counts = {
+            "hosts": len(await db.get_hosts()),
+            "endpoints": len(await db.get_endpoints()),
+            "findings": len(await db.get_findings()),
+            "screenshots": len(await db.get_screenshots()),
+        }
 
     console.print(f"\n[bold bright_green]Hunt complete! {result_summary}[/bold bright_green]")
+    final_status = "completed_with_errors" if failure_stage else "completed"
+    _write_manifest(final_status, result_summary)
     return True
 def _build_ai_client(config):
     """

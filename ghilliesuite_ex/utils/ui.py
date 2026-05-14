@@ -52,7 +52,7 @@ def print_banner(console: Console) -> None:
     console.print(
         Align.center(
             Text(
-                "⚡ Multi-Agent · SQLite State · DAG Concurrency · HitL Safe Mode ⚡",
+                "Rules-First Orchestration · SQLite State · Safety Profiles · HitL Gates",
                 style="dim italic",
             )
         )

@@ -18,7 +18,11 @@ hcli_state.db
 # ========================
 reports/
 output/
-*.json
+reports/*.json
+reports/*.html
+reports/*.md
+reports/*_bounty_draft.txt
+reports/*_run.json
 tmp/
 # Kecualikan README.md agar tetap ter-upload
 !README.md 
@@ -56,4 +60,4 @@ env/
 GhillieSuite-EX.git/
 replace.txt
 rewrite_email.py
-.mailmap
+.mailmap

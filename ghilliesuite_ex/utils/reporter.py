@@ -129,6 +129,250 @@ def _image_data_uri(path: str) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
+def serialize_scope(scope: Any) -> dict[str, Any] | list[str] | str:
+    if hasattr(scope, "to_dict"):
+        return scope.to_dict()
+    if isinstance(scope, (list, tuple)):
+        return [str(item) for item in scope]
+    return _safe_text(scope)
+
+
+def build_report_data(
+    *,
+    target: str,
+    generated_at: str,
+    scope: Any,
+    findings: list[Finding],
+    hosts: list[Host],
+    endpoints: list[Endpoint],
+    screenshots: list[Screenshot],
+    config: Config,
+    ai_available: bool,
+) -> dict[str, Any]:
+    ai_status = getattr(config, "ai_status_message", "AI triage disabled")
+    ai_reason = getattr(config, "ai_disabled_reason", "")
+    return {
+        "target": target,
+        "generated_at": generated_at,
+        "scope": serialize_scope(scope),
+        "scan_config": {
+            "ai_triage": {
+                "enabled": ai_available,
+                "status": ai_status,
+                "reason": ai_reason,
+            },
+            "js_deep_inspection": {
+                "js_max_workers": config.js_max_workers,
+                "js_max_files": config.js_max_files,
+                "js_llm_concurrency": config.js_llm_concurrency,
+                "js_snippet_max_len": config.js_snippet_max_len,
+                "js_http_timeout": config.js_http_timeout,
+                "js_llm_timeout": config.js_llm_timeout,
+            },
+            "force_exploit": bool(getattr(config, "force_exploit", False)),
+            "generate_bounty_draft": bool(getattr(config, "generate_bounty_draft", False)),
+        },
+        "stats": {
+            "hosts": len(hosts),
+            "endpoints": len(endpoints),
+            "findings": len(findings),
+        },
+        "findings": [
+            {
+                "id": finding.id,
+                "tool": _report_safe_text(finding.tool),
+                "target": _report_safe_text(finding.target),
+                "severity": _report_safe_text(finding.severity),
+                "title": _report_safe_text(finding.title),
+                "evidence": _report_safe_text(finding.evidence),
+                "reproducible_steps": _report_safe_text(finding.reproducible_steps),
+                "raw_output_excerpt": _report_safe_text(finding.raw_output)[:500],
+                "timestamp": _report_safe_text(finding.timestamp),
+                "evidence_request_path": _extract_evidence_paths(finding.evidence)[0],
+                "evidence_response_path": _extract_evidence_paths(finding.evidence)[1],
+            }
+            for finding in findings
+        ],
+        "hosts": [
+            {"domain": host.domain, "status_code": host.status_code, "tech_stack": host.tech_stack}
+            for host in hosts
+        ],
+        "screenshots": [
+            {"url": shot.url, "path": shot.path, "title": shot.title, "status": shot.status}
+            for shot in screenshots
+        ],
+    }
+
+
+def render_markdown_report(
+    *,
+    target: str,
+    generated_at: datetime,
+    scope: Any,
+    findings: list[Finding],
+    hosts: list[Host],
+    endpoints: list[Endpoint],
+    screenshots: list[Screenshot],
+    config: Config,
+) -> str:
+    ai_status = getattr(config, "ai_status_message", "AI triage disabled")
+    ai_reason = getattr(config, "ai_disabled_reason", "")
+    scope_display = ", ".join(scope) if isinstance(scope, (list, tuple)) else _safe_text(scope)
+    md_lines = [
+        "# GhillieSuite-EX Bug Bounty Report",
+        "",
+        f"**Target:** `{target}`  ",
+        f"**Generated:** {generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}  ",
+        f"**Scope:** {scope_display}  ",
+        f"**AI Triage:** {ai_status}" + (f" ({ai_reason})" if ai_reason else "") + "  ",
+        "",
+        "---",
+        "",
+        "## Summary",
+        "",
+        "| Metric | Count |",
+        "|--------|-------|",
+        f"| Hosts discovered | {len(hosts)} |",
+        f"| Endpoints mapped | {len(endpoints)} |",
+        f"| Total findings   | {len(findings)} |",
+        "",
+        "## Execution Flags",
+        "",
+        "| Flag | Value |",
+        "|------|-------|",
+        f"| `force_exploit` | {bool(getattr(config, 'force_exploit', False))} |",
+        f"| `generate_bounty_draft` | {bool(getattr(config, 'generate_bounty_draft', False))} |",
+        "",
+        "## JS Deep Inspection Config",
+        "",
+        "| Setting | Value |",
+        "|---------|-------|",
+        f"| `js_max_workers` | {config.js_max_workers} |",
+        f"| `js_max_files` | {config.js_max_files} |",
+        f"| `js_llm_concurrency` | {config.js_llm_concurrency} |",
+        f"| `js_snippet_max_len` | {config.js_snippet_max_len} |",
+        f"| `js_http_timeout` | {config.js_http_timeout} |",
+        f"| `js_llm_timeout` | {config.js_llm_timeout} |",
+        "",
+    ]
+
+    stealth_findings = [finding for finding in findings if finding.tool == "stealth_payload"]
+    standard_findings = [finding for finding in findings if finding.tool != "stealth_payload"]
+    by_severity: dict[str, list[Finding]] = {severity: [] for severity in _SEVERITY_ORDER}
+    for finding in standard_findings:
+        by_severity.setdefault(finding.severity.lower(), []).append(finding)
+
+    for severity in _SEVERITY_ORDER:
+        bucket = by_severity.get(severity, [])
+        if not bucket:
+            continue
+        emoji = {
+            "critical": "CRIT",
+            "high": "HIGH",
+            "medium": "MED",
+            "low": "LOW",
+            "info": "INFO",
+        }.get(severity, "INFO")
+        md_lines += [
+            f"## {emoji} {severity.capitalize()} Findings ({len(bucket)})",
+            "",
+        ]
+        for index, finding in enumerate(bucket, start=1):
+            req_path, res_path = _extract_evidence_paths(finding.evidence)
+            md_lines += [
+                f"### {index}. {_report_safe_text(finding.title)}",
+                "",
+                "| Field | Value |",
+                "|-------|-------|",
+                f"| **Tool** | `{_report_safe_text(finding.tool)}` |",
+                f"| **Target** | `{_report_safe_text(finding.target)}` |",
+                f"| **Severity** | **{_report_safe_text(finding.severity).upper()}** |",
+                f"| **Timestamp** | {_report_safe_text(finding.timestamp)} |",
+                "",
+                "**Evidence:**",
+                "```",
+                _report_safe_text(finding.evidence or "N/A"),
+                "```",
+                f"Evidence Request: `{req_path}`" if req_path else "",
+                f"Evidence Response: `{res_path}`" if res_path else "",
+                "",
+                "**Reproducible Steps:**",
+                "",
+                _report_safe_text(finding.reproducible_steps or "N/A"),
+                "",
+                "**Raw Output (excerpt):**",
+                "```",
+                _report_safe_text(finding.raw_output)[:500] if finding.raw_output else "N/A",
+                "```",
+                "",
+                "---",
+                "",
+            ]
+
+    if stealth_findings:
+        md_lines += [
+            f"## AI Stealth Probes & WAF Bypasses ({len(stealth_findings)})",
+            "",
+            "Targeted low-noise probes executed via Python requests. Includes WAF bypass attempts and response evidence.",
+            "",
+        ]
+        for index, finding in enumerate(stealth_findings, start=1):
+            req_path, res_path = _extract_evidence_paths(finding.evidence)
+            md_lines += [
+                f"### {index}. {_report_safe_text(finding.title)}",
+                "",
+                "| Field | Value |",
+                "|-------|-------|",
+                f"| **Tool** | `{_report_safe_text(finding.tool)}` |",
+                f"| **Target** | `{_report_safe_text(finding.target)}` |",
+                f"| **Severity** | **{_report_safe_text(finding.severity).upper()}** |",
+                f"| **Timestamp** | {_report_safe_text(finding.timestamp)} |",
+                "",
+                "**Evidence:**",
+                "```",
+                _report_safe_text(finding.evidence or "N/A"),
+                "```",
+                f"Evidence Request: `{req_path}`" if req_path else "",
+                f"Evidence Response: `{res_path}`" if res_path else "",
+                "",
+                "**Reproducible Steps:**",
+                "",
+                _report_safe_text(finding.reproducible_steps or "N/A"),
+                "",
+                "**Raw Output (excerpt):**",
+                "```",
+                _report_safe_text(finding.raw_output[:500] if finding.raw_output else "N/A"),
+                "```",
+                "",
+                "---",
+                "",
+            ]
+
+    if hosts:
+        md_lines += [
+            "## Appendix - Discovered Hosts",
+            "",
+            "| Domain | Status | Tech Stack |",
+            "|--------|--------|------------|",
+        ]
+        for host in hosts:
+            md_lines.append(f"| `{host.domain}` | {host.status_code} | {host.tech_stack} |")
+        md_lines.append("")
+
+    if screenshots:
+        md_lines += [
+            "## Appendix - Screenshots",
+            "",
+            "| URL | Screenshot Path | Status |",
+            "|-----|------------------|--------|",
+        ]
+        for shot in screenshots:
+            md_lines.append(f"| `{shot.url}` | `{shot.path}` | {shot.status} |")
+        md_lines.append("")
+
+    return "\n".join(line for line in md_lines if line is not None)
+
+
 class HtmlReporter:
     """
     Generates a polished, self-contained HTML security report.
@@ -205,6 +449,7 @@ class HtmlReporter:
         execution_flags = {
             "execution_profile": getattr(self.cfg, "execution_profile", "balanced"),
             "force_exploit": bool(getattr(self.cfg, "force_exploit", False)),
+            "generate_bounty_draft": bool(getattr(self.cfg, "generate_bounty_draft", False)),
             "ai_triage_status": getattr(self.cfg, "ai_status_message", "AI triage disabled"),
             "ai_triage_reason": getattr(self.cfg, "ai_disabled_reason", ""),
         }
@@ -241,7 +486,8 @@ class HtmlReporter:
             raise
         self.console.print(f"  HTML: [underline]{html_path.resolve()}[/underline]")
         
-        self._generate_bounty_draft(target, safe_target, enriched, output_path)
+        if bool(getattr(self.cfg, "generate_bounty_draft", False)):
+            self._generate_bounty_draft(target, safe_target, enriched, output_path)
 
         return html_path
 
@@ -483,6 +729,7 @@ def _e(s: Any) -> str:
     return _html.escape(_safe_text(s), quote=True)
 
 
+
 def _render_html(
     target: str,
     scope: list[str],
@@ -494,277 +741,804 @@ def _render_html(
     js_config: dict[str, Any] | None = None,
     execution_flags: dict[str, Any] | None = None,
 ) -> str:
-    # Filter out inactive hosts and their endpoints
+    """Render a standalone HTML report with inline CSS/JS only."""
     active_hosts = [h for h in hosts if 200 <= getattr(h, "status_code", 0) < 400]
     active_domains = {h.domain for h in active_hosts}
     screenshots = screenshots or []
-    
+
     active_endpoints = []
     for ep in endpoints:
         domain = ep.url.split("//")[-1].split("/")[0].split(":")[0]
         if domain in active_domains:
             active_endpoints.append(ep)
-            
+
     endpoints = active_endpoints
     hosts = active_hosts
 
     total = len(findings)
     counts_all = {s: sum(1 for f in findings if f["severity"] == s) for s in _SEVERITY_ORDER}
 
-    # Separate stealth probes from standard findings
     stealth_findings = [f for f in findings if f.get("tool") == "stealth_payload"]
     non_stealth = [f for f in findings if f.get("tool") != "stealth_payload"]
-
-    # Separate hot (actionable) findings from passive advisories and low/info noise
-    hot_findings  = [f for f in non_stealth if f["severity"] in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
-    advisories    = [f for f in non_stealth if f["tool"] in _ADVISORY_TOOLS]
+    hot_findings = [f for f in non_stealth if f["severity"] in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
+    advisories = [f for f in non_stealth if f["tool"] in _ADVISORY_TOOLS]
     cold_findings = [f for f in non_stealth if f["severity"] not in _HOT_SEVERITIES and f["tool"] not in _ADVISORY_TOOLS]
     counts_hot = {s: sum(1 for f in hot_findings if f["severity"] == s) for s in _SEVERITY_ORDER}
 
     js_config = js_config or {}
     execution_flags = execution_flags or {}
+    scope_display = ", ".join(_safe_text(item) for item in scope)
+
+    screenshot_section = (
+        f"""
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Visual Evidence ({len(screenshots)})</h2>
+          <p>Embedded inline when the file size allows a standalone report.</p>
+        </div>
+        <div class="screenshots-grid">
+          {"".join(_screenshot_card(s) for s in screenshots[:24])}
+        </div>
+        {"" if len(screenshots) <= 24 else f'<p class="section-note">Showing 24 of {len(screenshots)} screenshots.</p>'}
+      </section>"""
+        if screenshots
+        else ""
+    )
+    hosts_section = (
+        f"""
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Discovered Hosts ({len(hosts)})</h2>
+          <p>Only active hosts are listed here to keep the appendix focused.</p>
+        </div>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Status</th>
+                <th>Tech Stack</th>
+              </tr>
+            </thead>
+            <tbody>
+              {"".join(_host_row(h) for h in hosts)}
+            </tbody>
+          </table>
+        </div>
+      </section>"""
+        if hosts
+        else ""
+    )
+    endpoints_section = (
+        f"""
+      <section class="panel">
+        <div class="section-heading">
+          <h2>High-Value Endpoints ({len(endpoints)})</h2>
+          <p>Prioritized recon paths that remained associated with active hosts.</p>
+        </div>
+        <div class="endpoint-shell">
+          <ul class="endpoint-list">
+            {"".join(f'<li>{_e(_report_safe_text(ep.url))}</li>' for ep in endpoints[:100])}
+            {"" if len(endpoints) <= 100 else f'<li class="muted">... and {len(endpoints) - 100} more</li>'}
+          </ul>
+        </div>
+      </section>"""
+        if endpoints
+        else ""
+    )
+    advisories_section = (
+        f"""
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Automated Advisories ({len(advisories)})</h2>
+          <p>Passive checks only. Confirm these manually before acting on them.</p>
+        </div>
+        <div class="stack">
+          {"".join(_finding_card(f) for f in advisories)}
+        </div>
+      </section>"""
+        if advisories
+        else ""
+    )
+    stealth_section = (
+        f"""
+      <section class="panel">
+        <div class="section-heading">
+          <h2>AI Stealth Probes ({len(stealth_findings)})</h2>
+          <p>Low-noise validation traffic with captured response evidence.</p>
+        </div>
+        <div class="stack">
+          {"".join(_finding_card(f) for f in stealth_findings)}
+        </div>
+      </section>"""
+        if stealth_findings
+        else ""
+    )
+    cold_section = (
+        f"""
+      <section class="panel">
+        <details class="disclosure">
+          <summary>Low / Info Findings ({len(cold_findings)})</summary>
+          <div class="stack">
+            {"".join(_finding_card(f) for f in cold_findings)}
+          </div>
+        </details>
+      </section>"""
+        if cold_findings
+        else ""
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GhillieSuite-EX Report — {_e(target)}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>GhillieSuite-EX Report - {_e(target)}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    body {{ font-family: 'Inter', sans-serif; }}
-    .finding-card {{ transition: transform 0.15s ease, box-shadow 0.15s ease; }}
-    .finding-card:hover {{ transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); }}
-    details > summary {{ cursor: pointer; list-style: none; }}
-    details > summary::-webkit-details-marker {{ display: none; }}
-    pre {{ white-space: pre-wrap; word-break: break-word; }}
-    .filter-btn {{ transition: all 0.15s ease; }}
-    .filter-btn.active {{ box-shadow: 0 0 0 2px rgba(16,185,129,0.6); }}
-    .finding-card[data-severity] {{ display: block; }}
-    .finding-card.hidden {{ display: none !important; }}
+    :root {{
+      --bg: #081017;
+      --bg-soft: #101a24;
+      --panel: rgba(9, 18, 28, 0.88);
+      --panel-strong: #0f1b28;
+      --line: rgba(173, 194, 217, 0.16);
+      --line-strong: rgba(173, 194, 217, 0.26);
+      --text: #e8f0f7;
+      --muted: #98adbf;
+      --accent: #3dd6b5;
+      --accent-soft: rgba(61, 214, 181, 0.18);
+      --critical: #ff5f6d;
+      --high: #ff9950;
+      --medium: #ffd166;
+      --low: #69b7ff;
+      --info: #97a6b5;
+      --shadow: 0 20px 55px rgba(0, 0, 0, 0.28);
+      --radius-lg: 24px;
+      --radius-md: 16px;
+      --radius-sm: 12px;
+      --font: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      --font-mono: "Cascadia Code", "Consolas", "Courier New", monospace;
+    }}
+    * {{
+      box-sizing: border-box;
+    }}
+    html {{
+      background:
+        radial-gradient(circle at top right, rgba(61, 214, 181, 0.18), transparent 34%),
+        radial-gradient(circle at bottom left, rgba(105, 183, 255, 0.16), transparent 30%),
+        var(--bg);
+    }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.55;
+      background: transparent;
+    }}
+    a {{
+      color: inherit;
+    }}
+    pre {{
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--font-mono);
+    }}
+    code {{
+      font-family: var(--font-mono);
+    }}
+    .shell {{
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 28px 20px 60px;
+    }}
+    .hero {{
+      position: relative;
+      overflow: hidden;
+      padding: 28px;
+      border: 1px solid var(--line);
+      border-radius: 32px;
+      background:
+        linear-gradient(135deg, rgba(61, 214, 181, 0.08), rgba(61, 214, 181, 0.01)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)),
+        var(--panel);
+      box-shadow: var(--shadow);
+    }}
+    .hero::after {{
+      content: "";
+      position: absolute;
+      inset: -120px -60px auto auto;
+      width: 260px;
+      height: 260px;
+      background: radial-gradient(circle, rgba(105, 183, 255, 0.12), transparent 70%);
+      pointer-events: none;
+    }}
+    .hero-top {{
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }}
+    .eyebrow {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #bff9ea;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }}
+    h1 {{
+      margin: 14px 0 6px;
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+    }}
+    .hero-subtitle,
+    .hero-meta,
+    .section-heading p,
+    .section-note,
+    .muted {{
+      color: var(--muted);
+    }}
+    .hero-meta {{
+      display: grid;
+      gap: 8px;
+      min-width: 260px;
+      font-size: 13px;
+    }}
+    .hero-meta strong,
+    .target-chip strong {{
+      color: var(--text);
+    }}
+    .hero-scope {{
+      margin-top: 22px;
+      display: inline-flex;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.02);
+      font-size: 13px;
+      color: var(--muted);
+      flex-wrap: wrap;
+    }}
+    .target-chip {{
+      margin-top: 12px;
+      display: inline-flex;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(61, 214, 181, 0.24);
+      color: #d7fff5;
+      background: rgba(61, 214, 181, 0.08);
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }}
+    .main-stack {{
+      display: grid;
+      gap: 20px;
+      margin-top: 24px;
+    }}
+    .panel {{
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: var(--panel);
+      padding: 22px;
+      box-shadow: var(--shadow);
+    }}
+    .stats-grid,
+    .meta-grid,
+    .screenshots-grid {{
+      display: grid;
+      gap: 14px;
+    }}
+    .stats-grid {{
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    }}
+    .meta-grid {{
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }}
+    .screenshots-grid {{
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    }}
+    .stat-card,
+    .meta-card,
+    .shot-card {{
+      border-radius: var(--radius-md);
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+    }}
+    .stat-card {{
+      padding: 16px;
+      min-height: 116px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }}
+    .stat-label {{
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }}
+    .stat-value {{
+      margin-top: 10px;
+      font-size: 36px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }}
+    .tone-critical .stat-value {{ color: var(--critical); }}
+    .tone-high .stat-value {{ color: var(--high); }}
+    .tone-medium .stat-value {{ color: var(--medium); }}
+    .tone-low .stat-value {{ color: var(--low); }}
+    .tone-neutral .stat-value {{ color: var(--accent); }}
+    .meta-card {{
+      padding: 14px;
+    }}
+    .meta-card .label {{
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }}
+    .meta-card .value {{
+      font-family: var(--font-mono);
+      color: #d8fbf2;
+      font-size: 13px;
+      word-break: break-word;
+    }}
+    .section-heading {{
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }}
+    .section-heading h2 {{
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }}
+    .section-heading p {{
+      margin: 0;
+      font-size: 13px;
+      max-width: 640px;
+    }}
+    .filter-bar {{
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }}
+    .filter-btn {{
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }}
+    .filter-btn:hover {{
+      transform: translateY(-1px);
+      border-color: var(--line-strong);
+    }}
+    .filter-btn.active {{
+      background: var(--accent-soft);
+      border-color: rgba(61, 214, 181, 0.38);
+      color: #d7fff5;
+    }}
+    .stack {{
+      display: grid;
+      gap: 16px;
+    }}
+    .finding-card {{
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--info);
+      border-radius: var(--radius-md);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.015)), var(--panel-strong);
+      overflow: hidden;
+      transition: transform 0.16s ease, border-color 0.16s ease;
+    }}
+    .finding-card:hover {{
+      transform: translateY(-2px);
+      border-color: var(--line-strong);
+    }}
+    .finding-card.hidden {{
+      display: none;
+    }}
+    .finding-card.sev-critical {{ border-left-color: var(--critical); }}
+    .finding-card.sev-high {{ border-left-color: var(--high); }}
+    .finding-card.sev-medium {{ border-left-color: var(--medium); }}
+    .finding-card.sev-low {{ border-left-color: var(--low); }}
+    .finding-card.sev-info {{ border-left-color: var(--info); }}
+    .finding-body {{
+      padding: 18px;
+    }}
+    .finding-top {{
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }}
+    .finding-top h3 {{
+      margin: 10px 0 0;
+      font-size: 19px;
+      letter-spacing: -0.02em;
+    }}
+    .chip-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }}
+    .chip {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+    }}
+    .chip.sev-critical {{ background: rgba(255, 95, 109, 0.18); color: #ffd5da; border-color: rgba(255, 95, 109, 0.32); }}
+    .chip.sev-high {{ background: rgba(255, 153, 80, 0.18); color: #ffe4cf; border-color: rgba(255, 153, 80, 0.32); }}
+    .chip.sev-medium {{ background: rgba(255, 209, 102, 0.18); color: #fff0c7; border-color: rgba(255, 209, 102, 0.32); }}
+    .chip.sev-low {{ background: rgba(105, 183, 255, 0.18); color: #d9eeff; border-color: rgba(105, 183, 255, 0.32); }}
+    .chip.sev-info {{ background: rgba(151, 166, 181, 0.18); color: #d7e0e9; border-color: rgba(151, 166, 181, 0.32); }}
+    .chip.tool {{
+      background: rgba(255, 255, 255, 0.04);
+      color: #c8d7e5;
+      border-color: var(--line);
+      font-family: var(--font-mono);
+      text-transform: none;
+      letter-spacing: 0;
+      font-weight: 600;
+    }}
+    .chip.passive {{
+      background: rgba(155, 113, 255, 0.18);
+      border-color: rgba(155, 113, 255, 0.34);
+      color: #eadbff;
+    }}
+    .chip.verified {{
+      background: rgba(255, 95, 109, 0.22);
+      border-color: rgba(255, 95, 109, 0.36);
+      color: #ffe0e4;
+    }}
+    .timestamp {{
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }}
+    .summary-grid,
+    .evidence-grid {{
+      display: grid;
+      gap: 12px;
+    }}
+    .summary-grid {{
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      margin-bottom: 14px;
+    }}
+    .evidence-grid {{
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }}
+    .summary-card,
+    .evidence-card {{
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.02);
+      padding: 14px;
+    }}
+    .summary-card h4,
+    .evidence-card h4 {{
+      margin: 0 0 10px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }}
+    .summary-card p {{
+      margin: 0;
+      font-size: 14px;
+      color: var(--text);
+    }}
+    .evidence-meta {{
+      display: grid;
+      gap: 6px;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      font-family: var(--font-mono);
+      word-break: break-word;
+    }}
+    .evidence-block {{
+      border-radius: 12px;
+      background: rgba(4, 11, 18, 0.86);
+      border: 1px solid rgba(61, 214, 181, 0.14);
+      padding: 12px;
+      color: #a7f5e4;
+      font-size: 12px;
+      max-height: 260px;
+      overflow: auto;
+    }}
+    .steps-block {{
+      border-radius: 12px;
+      background: rgba(6, 12, 21, 0.92);
+      border: 1px solid rgba(105, 183, 255, 0.16);
+      padding: 12px;
+      color: #d8ebff;
+      font-size: 12px;
+      max-height: 320px;
+      overflow: auto;
+    }}
+    details {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.015);
+    }}
+    details summary {{
+      list-style: none;
+      cursor: pointer;
+      user-select: none;
+    }}
+    details summary::-webkit-details-marker {{
+      display: none;
+    }}
+    .disclosure {{
+      padding: 14px;
+    }}
+    .disclosure summary {{
+      font-size: 13px;
+      color: var(--text);
+      font-weight: 700;
+      margin-bottom: 12px;
+    }}
+    .evidence-disclosure {{
+      margin-top: 12px;
+      padding: 12px;
+    }}
+    .evidence-disclosure summary {{
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+    }}
+    .evidence-disclosure .disclosure-grid {{
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }}
+    .evidence-file {{
+      font-size: 11px;
+      color: var(--muted);
+      word-break: break-word;
+      font-family: var(--font-mono);
+    }}
+    .table-shell,
+    .endpoint-shell {{
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: rgba(255, 255, 255, 0.02);
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+    }}
+    th,
+    td {{
+      padding: 14px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+    }}
+    th {{
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.02);
+    }}
+    td {{
+      font-size: 13px;
+      color: var(--text);
+    }}
+    tr:last-child td {{
+      border-bottom: none;
+    }}
+    .mono {{
+      font-family: var(--font-mono);
+      word-break: break-word;
+    }}
+    .status-good {{ color: #8af0d5; }}
+    .status-warn {{ color: #ffd68c; }}
+    .status-bad {{ color: #ffb0b7; }}
+    .shot-card {{
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }}
+    .shot-card img {{
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+    }}
+    .shot-title {{
+      font-size: 13px;
+      color: var(--text);
+      font-weight: 700;
+    }}
+    .shot-meta,
+    .shot-path {{
+      font-size: 11px;
+      color: var(--muted);
+      word-break: break-word;
+      font-family: var(--font-mono);
+    }}
+    .endpoint-list {{
+      list-style: none;
+      margin: 0;
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+      font-size: 12px;
+      color: #d8fbf2;
+      font-family: var(--font-mono);
+    }}
+    .endpoint-list li {{
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(61, 214, 181, 0.12);
+      background: rgba(61, 214, 181, 0.04);
+      word-break: break-word;
+    }}
+    .footer {{
+      margin-top: 18px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    @media (max-width: 720px) {{
+      .shell {{
+        padding: 18px 14px 48px;
+      }}
+      .hero,
+      .panel {{
+        padding: 18px;
+        border-radius: 22px;
+      }}
+      .hero-scope,
+      .target-chip {{
+        border-radius: 16px;
+      }}
+      .finding-body {{
+        padding: 14px;
+      }}
+      th,
+      td {{
+        padding: 12px;
+      }}
+    }}
   </style>
 </head>
-<body class="bg-gray-950 text-gray-100 min-h-screen">
-
-  <!-- ── Header ───────────────────────────────────────────────────────── -->
-  <header class="bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 border-b border-gray-700 px-8 py-6">
-    <div class="max-w-7xl mx-auto flex items-center justify-between">
-      <div>
-        <div class="flex items-center gap-3 mb-1">
-          <span class="text-2xl">🎯</span>
-          <h1 class="text-2xl font-bold text-white tracking-tight">GhillieSuite-EX</h1>
-          <span class="text-xs bg-emerald-600 text-white px-2 py-0.5 rounded-full font-medium">Security Report</span>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div class="hero-top">
+        <div>
+          <div class="eyebrow">Authorized Security Report</div>
+          <h1>GhillieSuite-EX</h1>
+          <p class="hero-subtitle">Standalone assessment output for authorized pentest and bug bounty workflows.</p>
+          <div class="target-chip"><strong>Target:</strong>&nbsp;{_e(target)}</div>
         </div>
-        <p class="text-gray-400 text-sm">Target: <span class="text-emerald-400 font-mono font-semibold">{_e(target)}</span></p>
-      </div>
-      <div class="text-right text-xs text-gray-500">
-        <p>Generated: {_e(generated_at)}</p>
-        <p>Scope: {_e(', '.join(scope))}</p>
-      </div>
-    </div>
-  </header>
-
-  <main class="max-w-7xl mx-auto px-8 py-8 space-y-10">
-
-    <!-- ── Dashboard ───────────────────────────────────────────────────────── -->
-    <section>
-      <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs">Executive Summary</h2>
-      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-        {_stat_card("Total Findings", str(total), "bg-gray-800", "text-white")}
-        {_stat_card("Critical", str(counts_all['critical']), "bg-red-950 border border-red-700", "text-red-400")}
-        {_stat_card("High", str(counts_all['high']), "bg-orange-950 border border-orange-700", "text-orange-400")}
-        {_stat_card("Medium", str(counts_all['medium']), "bg-yellow-950 border border-yellow-700", "text-yellow-400")}
-        {_stat_card("Hosts Found", str(len(hosts)), "bg-gray-800", "text-sky-400")}
-        {_stat_card("Endpoints", str(len(endpoints)), "bg-gray-800", "text-violet-400")}
-      </div>
-    </section>
-
-    <!-- Execution Flags -->
-    <section>
-      <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs">Execution Flags</h2>
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 text-sm text-gray-300">
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-              <div class="text-xs text-gray-500">Execution Profile</div>
-              <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("execution_profile", "balanced")))}</div>
-            </div>
-            <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-              <div class="text-xs text-gray-500">Force Exploit</div>
-              <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("force_exploit", False)))}</div>
-            </div>
-          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-            <div class="text-xs text-gray-500">AI Triage</div>
-            <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("ai_triage_status", "AI triage disabled")))}</div>
-          </div>
-          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-            <div class="text-xs text-gray-500">AI Detail</div>
-            <div class="font-mono text-emerald-400">{_e(str(execution_flags.get("ai_triage_reason", "") or "None"))}</div>
-          </div>
+        <div class="hero-meta">
+          <div><strong>Generated:</strong> {_e(generated_at)}</div>
+          <div><strong>Execution profile:</strong> {_e(str(execution_flags.get("execution_profile", "balanced")))}</div>
+          <div><strong>AI triage:</strong> {_e(str(execution_flags.get("ai_triage_status", "AI triage disabled")))}</div>
+          <div><strong>AI detail:</strong> {_e(str(execution_flags.get("ai_triage_reason", "") or "None"))}</div>
         </div>
       </div>
-    </section>
+      <div class="hero-scope"><strong>Scope:</strong> {_e(scope_display or "Not provided")}</div>
+    </header>
 
-    <!-- ── Hot Findings (Critical / High / Medium) ────────────────────────── -->
-    <!-- â”€â”€ JS Deep Inspection Config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ -->
-    <section>
-      <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs">JS Deep Inspection Config</h2>
-      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 text-sm text-gray-300">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-            <div class="text-xs text-gray-500">Workers</div>
-            <div class="font-mono text-emerald-400">{_e(js_config.get("js_max_workers", ""))}</div>
-          </div>
-          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-            <div class="text-xs text-gray-500">Max Files</div>
-            <div class="font-mono text-emerald-400">{_e(js_config.get("js_max_files", ""))}</div>
-          </div>
-          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-            <div class="text-xs text-gray-500">LLM Concurrency</div>
-            <div class="font-mono text-emerald-400">{_e(js_config.get("js_llm_concurrency", ""))}</div>
-          </div>
-          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-            <div class="text-xs text-gray-500">Snippet Max Len</div>
-            <div class="font-mono text-emerald-400">{_e(js_config.get("js_snippet_max_len", ""))}</div>
-          </div>
-          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-            <div class="text-xs text-gray-500">HTTP Timeout (s)</div>
-            <div class="font-mono text-emerald-400">{_e(js_config.get("js_http_timeout", ""))}</div>
-          </div>
-          <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-            <div class="text-xs text-gray-500">LLM Timeout (s)</div>
-            <div class="font-mono text-emerald-400">{_e(js_config.get("js_llm_timeout", ""))}</div>
-          </div>
+    <main class="main-stack">
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Executive Summary</h2>
+          <p>Counts reflect findings after report-time redaction and host/activity filtering.</p>
         </div>
-      </div>
-    </section>
-
-    <section id="hot-findings">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold text-gray-300 uppercase tracking-widest text-xs border-b border-gray-800 pb-2 flex-1">
-          🔥 Active Vulnerability Findings ({len(hot_findings)})
-        </h2>
-      </div>
-
-      <!-- Severity filter bar -->
-      <div class="flex gap-2 mb-5 flex-wrap" id="filter-bar">
-        <button class="filter-btn active text-xs px-3 py-1.5 rounded-full bg-gray-700 text-white font-semibold"
-                data-filter="all" onclick="filterFindings('all', this)">
-          ALL ({len(hot_findings)})
-        </button>
-        <button class="filter-btn text-xs px-3 py-1.5 rounded-full bg-red-900 text-red-200 font-semibold"
-                data-filter="critical" onclick="filterFindings('critical', this)">
-          🔴 CRITICAL ({counts_hot['critical']})
-        </button>
-        <button class="filter-btn text-xs px-3 py-1.5 rounded-full bg-orange-900 text-orange-200 font-semibold"
-                data-filter="high" onclick="filterFindings('high', this)">
-          🟠 HIGH ({counts_hot['high']})
-        </button>
-        <button class="filter-btn text-xs px-3 py-1.5 rounded-full bg-yellow-900 text-yellow-200 font-semibold"
-                data-filter="medium" onclick="filterFindings('medium', this)">
-          🟡 MEDIUM ({counts_hot['medium']})
-        </button>
-      </div>
-
-      <div id="findings-container">
-        {"".join(_finding_card(f) for f in hot_findings) if hot_findings else _empty_state("No critical/high/medium vulnerabilities detected. 🎉")}
-      </div>
-    </section>
-
-    <!-- ── Advisories ───────────────────────────────────────────────────────────── -->
-    {"" if not advisories else f'''
-    <section>
-      <h2 class="text-lg font-semibold text-gray-300 mb-5 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
-        ⚡ Automated Advisories — BOLA/IDOR &amp; AI Injection ({len(advisories)})
-      </h2>
-      <p class="text-gray-500 text-sm mb-4">Passive analysis only — no active exploit traffic sent. Verify manually.</p>
-      {"".join(_finding_card(f) for f in advisories)}
-    </section>'''}
-
-    <!-- ── AI Stealth Probes ───────────────────────────────────────────────────── -->
-    {"" if not stealth_findings else f'''
-    <section id="stealth-probes">
-      <h2 class="text-lg font-semibold text-gray-300 mb-5 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
-        AI Stealth Probes &amp; WAF Bypasses ({len(stealth_findings)})
-      </h2>
-      <p class="text-gray-500 text-sm mb-4">Targeted low-noise probes executed via Python requests. Includes WAF bypass attempts and response evidence.</p>
-      {"".join(_finding_card(f) for f in stealth_findings)}
-    </section>'''}
-
-    <!-- ── Low / Info (collapsed) ────────────────────────────────────────────── -->
-    {"" if not cold_findings else f'''
-    <section>
-      <details class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <summary class="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-800 transition-colors">
-          <span class="text-sm font-semibold text-gray-400">⚪ Low / Info Findings ({len(cold_findings)}) — click to expand</span>
-          <span class="text-gray-600 text-xs">These are low-priority or informational — review when time allows.</span>
-        </summary>
-        <div class="p-4 space-y-4">
-          {"".join(_finding_card(f) for f in cold_findings)}
+        <div class="stats-grid">
+          {_stat_card("Total Findings", str(total), "neutral")}
+          {_stat_card("Critical", str(counts_all["critical"]), "critical")}
+          {_stat_card("High", str(counts_all["high"]), "high")}
+          {_stat_card("Medium", str(counts_all["medium"]), "medium")}
+          {_stat_card("Hosts Found", str(len(hosts)), "neutral")}
+          {_stat_card("Endpoints", str(len(endpoints)), "low")}
         </div>
-      </details>
-    </section>'''}
+      </section>
 
-    <!-- ── Hosts appendix ─────────────────────────────────────────────────────────── -->
-    {"" if not screenshots else f'''
-    <section>
-      <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
-        Visual Evidence (Screenshots) ({len(screenshots)})
-      </h2>
-      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {"".join(_screenshot_card(s) for s in screenshots[:24])}
-      </div>
-      {"" if len(screenshots) <= 24 else f'<p class="text-xs text-gray-500 mt-2">Showing 24 of {len(screenshots)} screenshots.</p>'}
-    </section>'''}
+      <section class="panel">
+        <div class="section-heading">
+          <h2>Execution Flags</h2>
+          <p>Operator-selected controls and AI availability captured with the report.</p>
+        </div>
+        <div class="meta-grid">
+          {_meta_card("Execution Profile", str(execution_flags.get("execution_profile", "balanced")))}
+          {_meta_card("Force Exploit", str(execution_flags.get("force_exploit", False)))}
+          {_meta_card("Generate Bounty Draft", str(execution_flags.get("generate_bounty_draft", False)))}
+          {_meta_card("AI Triage Status", str(execution_flags.get("ai_triage_status", "AI triage disabled")))}
+        </div>
+      </section>
 
-    {"" if not hosts else f'''
-    <section>
-      <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
-        Discovered Hosts ({len(hosts)})
-      </h2>
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm text-left text-gray-300">
-          <thead class="text-xs uppercase text-gray-500 bg-gray-900">
-            <tr>
-              <th class="px-4 py-3">Domain</th>
-              <th class="px-4 py-3">Status</th>
-              <th class="px-4 py-3">Tech Stack</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-800">
-            {"".join(_host_row(h) for h in hosts)}
-          </tbody>
-        </table>
-      </div>
-    </section>'''}
+      <section class="panel">
+        <div class="section-heading">
+          <h2>JS Deep Inspection Config</h2>
+          <p>Snapshot of the runtime inspection settings that shaped JavaScript review depth.</p>
+        </div>
+        <div class="meta-grid">
+          {_meta_card("Workers", js_config.get("js_max_workers", ""))}
+          {_meta_card("Max Files", js_config.get("js_max_files", ""))}
+          {_meta_card("LLM Concurrency", js_config.get("js_llm_concurrency", ""))}
+          {_meta_card("Snippet Max Len", js_config.get("js_snippet_max_len", ""))}
+          {_meta_card("HTTP Timeout (s)", js_config.get("js_http_timeout", ""))}
+          {_meta_card("LLM Timeout (s)", js_config.get("js_llm_timeout", ""))}
+        </div>
+      </section>
 
-    <!-- ── High-value endpoints ──────────────────────────────────────────────────── -->
-    {"" if not endpoints else f'''
-    <section>
-      <h2 class="text-lg font-semibold text-gray-300 mb-4 uppercase tracking-widest text-xs border-b border-gray-800 pb-2">
-        High-Value Endpoints ({len(endpoints)})
-      </h2>
-      <div class="bg-gray-900 rounded-xl border border-gray-800 p-4 max-h-64 overflow-y-auto">
-        <ul class="space-y-1 font-mono text-xs text-gray-400">
-          {"".join(f'<li class="hover:text-emerald-400 transition-colors">{_e(_report_safe_text(ep.url))}</li>' for ep in endpoints[:100])}
-          {"" if len(endpoints) <= 100 else f'<li class="text-gray-600 italic">… and {len(endpoints)-100} more</li>'}
-        </ul>
-      </div>
-    </section>'''}
+      <section class="panel" id="hot-findings">
+        <div class="section-heading">
+          <h2>Active Vulnerability Findings ({len(hot_findings)})</h2>
+          <p>Critical, high, and medium findings prioritized for immediate review.</p>
+        </div>
+        <div class="filter-bar" id="filter-bar">
+          <button class="filter-btn active" data-filter="all" onclick="filterFindings('all', this)">All ({len(hot_findings)})</button>
+          <button class="filter-btn" data-filter="critical" onclick="filterFindings('critical', this)">Critical ({counts_hot["critical"]})</button>
+          <button class="filter-btn" data-filter="high" onclick="filterFindings('high', this)">High ({counts_hot["high"]})</button>
+          <button class="filter-btn" data-filter="medium" onclick="filterFindings('medium', this)">Medium ({counts_hot["medium"]})</button>
+        </div>
+        <div id="findings-container" class="stack">
+          {"".join(_finding_card(f) for f in hot_findings) if hot_findings else _empty_state("No critical, high, or medium findings were produced in this run.")}
+        </div>
+      </section>
 
-  </main>
+      {advisories_section}
+      {stealth_section}
+      {cold_section}
+      {screenshot_section}
+      {hosts_section}
+      {endpoints_section}
+    </main>
 
-  <footer class="border-t border-gray-800 px-8 py-4 text-center text-xs text-gray-600 mt-10">
-    GhillieSuite-EX — For authorized security testing only. You are responsible for program compliance.
-  </footer>
+    <footer class="footer">
+      GhillieSuite-EX - For authorized security testing only. Operator remains responsible for program compliance.
+    </footer>
+  </div>
 
   <script>
     function filterFindings(severity, btn) {{
-      // Update active button
       document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-
-      // Show/hide cards
       document.querySelectorAll('#findings-container .finding-card').forEach(card => {{
         if (severity === 'all' || card.dataset.severity === severity) {{
           card.classList.remove('hidden');
@@ -778,117 +1552,127 @@ def _render_html(
 </html>"""
 
 
-def _stat_card(label: str, value: str, bg: str, text_color: str) -> str:
+def _stat_card(label: str, value: str, tone: str) -> str:
     return f"""
-    <div class="rounded-xl {bg} p-4 text-center">
-      <p class="text-3xl font-bold {text_color}">{_e(value)}</p>
-      <p class="text-gray-400 text-xs mt-1">{_e(label)}</p>
+    <div class="stat-card tone-{_e(tone)}">
+      <div class="stat-label">{_e(label)}</div>
+      <div class="stat-value">{_e(value)}</div>
+    </div>"""
+
+
+def _meta_card(label: str, value: Any) -> str:
+    return f"""
+    <div class="meta-card">
+      <span class="label">{_e(label)}</span>
+      <div class="value">{_e(value)}</div>
     </div>"""
 
 
 def _finding_card(f: dict[str, Any]) -> str:
-    sev  = f.get("severity", "info")
-    meta = _SEV_META.get(sev, _SEV_META["info"])
-    badge_cls  = meta["badge"]
-    border_cls = meta["border"]
-    emoji      = meta["emoji"]
+    sev = _safe_text(f.get("severity", "info")).lower()
+    if sev not in _SEVERITY_ORDER:
+        sev = "info"
 
-    what_is_it  = _e(f.get("what_is_it",  ""))
-    impact      = _e(f.get("impact",      ""))
+    what_is_it = _e(f.get("what_is_it", ""))
+    impact = _e(f.get("impact", ""))
     remediation = _e(f.get("remediation", ""))
-    evidence    = _e(f.get("evidence",    "") or "N/A")
-    steps       = _e(f.get("reproducible_steps", "") or "No steps provided.")
-    raw_out     = _safe_text(f.get("raw_output", "") or "")
-    # Truncate and escape raw output for display
+    evidence = _e(f.get("evidence", "") or "N/A")
+    steps = _e(f.get("reproducible_steps", "") or "No steps provided.")
+    raw_out = _safe_text(f.get("raw_output", "") or "")
     raw_display = _e(raw_out[:800]) if raw_out.strip() else ""
-    req_path    = _e(f.get("evidence_request_path", "") or "")
-    res_path    = _e(f.get("evidence_response_path", "") or "")
-    req_text    = _e(f.get("evidence_request", "") or "")
-    res_text    = _e(f.get("evidence_response", "") or "")
-    tool_name   = f.get("tool", "")
-    target_url  = _e(f.get("target", ""))
-    h_status    = f.get("host_status", "")
-    h_tech      = f.get("host_tech", "")
+    req_path = _e(f.get("evidence_request_path", "") or "")
+    res_path = _e(f.get("evidence_response_path", "") or "")
+    req_text = _e(f.get("evidence_request", "") or "")
+    res_text = _e(f.get("evidence_response", "") or "")
+    tool_name = _safe_text(f.get("tool", ""))
+    target_url = _e(f.get("target", ""))
+    h_status = f.get("host_status", "")
+    h_tech = f.get("host_tech", "")
     is_advisory = tool_name in _ADVISORY_TOOLS
 
-    advisory_badge = '<span class="text-xs bg-purple-700 text-white px-2 py-0.5 rounded-full ml-2">Passive Advisory</span>' if is_advisory else ""
-    verified_badge = '<span class="text-xs bg-red-600 border border-red-400 text-white px-2 py-0.5 rounded-full ml-2 font-bold shadow-[0_0_8px_rgba(220,38,38,0.8)]">VERIFIED</span>' if tool_name in ("dalfox", "sqlmap") or "BOLA/IDOR Detected" in _e(f.get('title','')) or "GraphQL Introspection" in _e(f.get('title','')) else ""
+    advisory_badge = '<span class="chip passive">Passive Advisory</span>' if is_advisory else ""
+    verified_badge = (
+        '<span class="chip verified">Verified</span>'
+        if tool_name in ("dalfox", "sqlmap")
+        or "BOLA/IDOR Detected" in _safe_text(f.get("title", ""))
+        or "GraphQL Introspection" in _safe_text(f.get("title", ""))
+        else ""
+    )
     status_str = _e(f"HTTP {h_status}") if h_status else _e("Status Unknown")
     tech_str = _e(f" - Tech: {h_tech}") if h_tech else ""
 
-    proof_block = f"""
-            <div class="mt-3">
-              <p class="text-emerald-500 text-xs uppercase font-semibold mb-1">🔬 Proof / Raw Tool Output</p>
-              <pre class="bg-black border border-emerald-900/50 rounded-lg p-3 text-xs text-emerald-300 overflow-x-auto max-h-40">{raw_display}</pre>
-            </div>""" if raw_display else ""
+    proof_block = (
+        f"""
+            <div>
+              <h4>Raw Tool Output</h4>
+              <pre class="evidence-block">{raw_display}</pre>
+            </div>"""
+        if raw_display
+        else ""
+    )
 
     evidence_files_block = ""
     if req_text or res_text or req_path or res_path:
         evidence_files_block = f"""
-            <details class="mt-3">
-              <summary class="text-xs text-gray-500 cursor-pointer">Captured HTTP Evidence (request/response)</summary>
-              <div class="mt-2 space-y-2">
-                {f'<div class="text-[11px] text-gray-600 break-all">Request File: {req_path}</div>' if req_path else ''}
-                {f'<pre class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-xs text-gray-300 whitespace-pre-wrap max-h-56 overflow-y-auto">{req_text}</pre>' if req_text else ''}
-                {f'<div class="text-[11px] text-gray-600 break-all">Response File: {res_path}</div>' if res_path else ''}
-                {f'<pre class="bg-gray-950 border border-gray-800 rounded-lg p-2 text-xs text-gray-300 whitespace-pre-wrap max-h-56 overflow-y-auto">{res_text}</pre>' if res_text else ''}
+            <details class="evidence-disclosure">
+              <summary>Captured HTTP Evidence</summary>
+              <div class="disclosure-grid">
+                {f'<div class="evidence-file">Request File: {req_path}</div>' if req_path else ''}
+                {f'<pre class="evidence-block">{req_text}</pre>' if req_text else ''}
+                {f'<div class="evidence-file">Response File: {res_path}</div>' if res_path else ''}
+                {f'<pre class="evidence-block">{res_text}</pre>' if res_text else ''}
               </div>
             </details>"""
 
     return f"""
-    <div class="finding-card bg-gray-900 border-l-4 {border_cls} rounded-xl mb-4 overflow-hidden" data-severity="{_e(sev)}">
-      <div class="px-6 py-4">
-        <!-- Header row -->
-        <div class="flex items-start justify-between gap-4 mb-3">
+    <article class="finding-card sev-{_e(sev)}" data-severity="{_e(sev)}">
+      <div class="finding-body">
+        <div class="finding-top">
           <div class="flex-1">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="{badge_cls} text-white text-xs font-semibold px-2 py-0.5 rounded-full uppercase">{_e(sev)}</span>
+            <div class="chip-row">
+              <span class="chip sev-{_e(sev)}">{_e(sev)}</span>
               {advisory_badge}
               {verified_badge}
-              <span class="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded-full font-mono">{_e(tool_name)}</span>
+              <span class="chip tool">{_e(tool_name)}</span>
             </div>
-            <h3 class="text-white font-semibold text-base mt-2">{emoji} {_e(f.get('title',''))}</h3>
+            <h3>{_e(f.get("title", ""))}</h3>
           </div>
-          <p class="text-gray-600 text-xs whitespace-nowrap">{_e(str(f.get('timestamp',''))[:19])}</p>
+          <div class="timestamp">{_e(str(f.get("timestamp", ""))[:19])}</div>
         </div>
 
-        <!-- AI plain-English summary -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-          <div class="bg-gray-800 rounded-lg p-3">
-            <p class="text-gray-500 text-xs font-semibold uppercase mb-1">What is it?</p>
-            <p class="text-gray-300 text-sm">{what_is_it}</p>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <h4>What Is It?</h4>
+            <p>{what_is_it}</p>
           </div>
-          <div class="bg-gray-800 rounded-lg p-3 border border-red-900/30">
-            <p class="text-red-400 text-xs font-semibold uppercase mb-1">Impact</p>
-            <p class="text-gray-300 text-sm">{impact}</p>
+          <div class="summary-card">
+            <h4>Impact</h4>
+            <p>{impact}</p>
           </div>
-          <div class="bg-gray-800 rounded-lg p-3">
-            <p class="text-gray-500 text-xs font-semibold uppercase mb-1">Remediation</p>
-            <p class="text-gray-300 text-sm">{remediation}</p>
+          <div class="summary-card">
+            <h4>Remediation</h4>
+            <p>{remediation}</p>
           </div>
         </div>
 
-        <!-- Evidence &amp; Reproducible Steps (Prominent) -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 pt-4 border-t border-gray-800">
-          <div>
-            <p class="text-gray-500 text-xs uppercase font-semibold mb-2">Technical Evidence</p>
-            <div class="bg-gray-950 border border-gray-800 rounded-lg p-3 space-y-2">
-              <p class="text-emerald-400 font-mono text-xs break-all">URL: {target_url}</p>
-              <p class="text-gray-400 font-mono text-xs">Response: {status_str}{tech_str}</p>
-              <pre class="text-xs text-gray-400 mt-2 overflow-x-auto whitespace-pre-wrap">{evidence}</pre>
-              {proof_block}
-              {evidence_files_block}
+        <div class="evidence-grid">
+          <div class="evidence-card">
+            <h4>Technical Evidence</h4>
+            <div class="evidence-meta">
+              <div>URL: {target_url}</div>
+              <div>Response: {status_str}{tech_str}</div>
             </div>
+            <pre class="evidence-block">{evidence}</pre>
+            {proof_block}
+            {evidence_files_block}
           </div>
-          <div>
-            <p class="text-sky-500 text-xs uppercase font-semibold mb-2">Steps to Reproduce (Browser/Burp)</p>
-            <div class="bg-gray-950 border border-gray-800 rounded-lg p-3">
-              <pre class="text-xs text-sky-300 overflow-x-auto whitespace-pre-wrap font-sans">{steps}</pre>
-            </div>
+          <div class="evidence-card">
+            <h4>Steps to Reproduce</h4>
+            <pre class="steps-block">{steps}</pre>
           </div>
         </div>
       </div>
-    </div>"""
+    </article>"""
 
 
 def _screenshot_card(s: dict[str, Any]) -> str:
@@ -898,40 +1682,39 @@ def _screenshot_card(s: dict[str, Any]) -> str:
     path = _e(s.get("path", ""))
     data_uri = s.get("data_uri") or ""
     img_block = (
-        f'<img src="{data_uri}" alt="{title}" class="rounded-lg border border-gray-800 w-full h-auto" />'
+        f'<img src="{data_uri}" alt="{title}" />'
         if data_uri
-        else '<div class="text-xs text-gray-500 italic">Screenshot file not embedded.</div>'
+        else '<div class="muted">Screenshot file not embedded.</div>'
     )
     return f"""
-    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3">
-      <div class="mb-2">
-        <div class="text-xs text-gray-400 font-mono break-all">{url}</div>
-        <div class="flex items-center gap-2 mt-1">
-          <span class="text-xs bg-gray-800 text-gray-300 px-2 py-0.5 rounded-full">{title}</span>
-          {f'<span class="text-xs text-gray-500">HTTP {status}</span>' if status else ''}
-        </div>
+    <div class="shot-card">
+      <div class="shot-meta">{url}</div>
+      <div>
+        <div class="shot-title">{title}</div>
+        <div class="shot-meta">{f'HTTP {status}' if status else 'Status unknown'}</div>
       </div>
       {img_block}
-      <div class="text-[10px] text-gray-600 mt-2 break-all">{path}</div>
+      <div class="shot-path">{path}</div>
     </div>"""
 
 
 def _host_row(h: Host) -> str:
-    status_color = (
-        "text-emerald-400" if 200 <= (h.status_code or 0) < 300 else
-        "text-yellow-400"  if 300 <= (h.status_code or 0) < 400 else
-        "text-red-400"     if (h.status_code or 0) >= 400 else
-        "text-gray-500"
+    status_code = h.status_code or 0
+    status_class = (
+        "status-good" if 200 <= status_code < 300 else
+        "status-warn" if 300 <= status_code < 400 else
+        "status-bad" if status_code >= 400 else
+        ""
     )
     return f"""
-    <tr class="hover:bg-gray-800 transition-colors">
-      <td class="px-4 py-2 font-mono text-emerald-400">{_e(h.domain)}</td>
-      <td class="px-4 py-2 {status_color}">{_e(h.status_code or '-')}</td>
-      <td class="px-4 py-2 text-gray-400 text-xs">{_e(h.tech_stack or '-')}</td>
+    <tr>
+      <td class="mono">{_e(h.domain)}</td>
+      <td class="{status_class}">{_e(h.status_code or "-")}</td>
+      <td>{_e(h.tech_stack or "-")}</td>
     </tr>"""
 
 
 def _empty_state(msg: str) -> str:
-    return f'<div class="text-center py-12 text-gray-600 text-sm">{_e(msg)}</div>'
+    return f'<div class="muted">{_e(msg)}</div>'
 
 
